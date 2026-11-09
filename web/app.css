@@ -67,6 +67,9 @@ header.page h1 { margin: 0; font-size: 26px; font-weight: 650; letter-spacing: -
 .preview { position: relative; border-radius: 8px; overflow: hidden; background: var(--sunken); aspect-ratio: 5 / 3; }
 .preview.portrait { aspect-ratio: 3 / 5; max-height: 60vh; margin: 0 auto; }
 .preview img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.preview img[hidden] { display: none; }
+/* Parts of a screen that are redrawn separately; they add no box of their own. */
+.part { display: contents; }
 .preview .badge { position: absolute; top: 8px; left: 8px; background: rgba(23,24,26,.82); color: #fff; font-size: 11px; font-weight: 600; padding: 4px 8px; border-radius: 999px; }
 .preview .empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 14px; padding: 16px; text-align: center; }
 

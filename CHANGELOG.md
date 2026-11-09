@@ -13,6 +13,30 @@ commit: one more than `main`'s current count.
 
 ## Unreleased
 
+- The app is much faster and steadier on a Pi Zero 2 W.
+  - Thumbnails and the editor's image are made about 3.5× and 6× faster
+    (a 12 MP JPEG, measured on a laptop), and loading a photo for the panel
+    about 2× faster: JPEGs are shrunk by a whole factor before the quality
+    scaler sees them.
+  - Thumbnails are made ahead of time, one at a time, whenever photos are
+    added. The frame never decodes more than two photos at once for the
+    app, and several requests for one photo share the work. Before, every
+    redraw of a screen could start the same thumbnail again.
+  - The app redraws only the part of a screen that changed, so previews and
+    thumbnails no longer reload every few seconds, and it waits for one
+    answer before asking again.
+  - A missed request no longer blanks the screen with "Failed to fetch".
+    Reads are retried, the screen keeps what the frame last said and shows
+    "Reconnecting…", and a preview that failed to load is asked for again.
+  - The preview survives a restart of the service (`preview.png` in the
+    data directory). It used to stay a broken image until the next photo.
+  - The app opens from the phone's own copy of its files and of the last
+    answers, then catches up, and reloads itself once when the frame's
+    software has changed. Unchanged answers cost a `304` instead of a body.
+  - The editor opens with the thumbnail and sharpens when the larger image
+    arrives, instead of a blank canvas.
+  - The service runs with `GOMEMLIMIT=256MiB`, to stay clear of the Pi's
+    512 MB.
 - Tapping a photo in **Up next** opens a menu instead of acting straight
   away: show it on the frame now, play it next, move it to the back of the
   queue, adjust it, or delete it (uploaded photos only). **View all** on

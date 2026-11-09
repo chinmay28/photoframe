@@ -51,7 +51,8 @@ type Player interface {
 
 // Thumbnailer makes thumbnails.
 type Thumbnailer interface {
-	Thumb(library.Photo) ([]byte, error)
+	// Thumb returns a JPEG; it gives up with ctx's error when ctx ends.
+	Thumb(context.Context, library.Photo) ([]byte, error)
 	Remove(id string)
 }
 
@@ -122,7 +123,7 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	if up == nil {
 		up = []library.Photo{}
 	}
-	writeJSON(w, http.StatusOK, StatusResponse{Name: s.Store.Get().Name, Player: s.Player.Status(), UpNext: up})
+	getJSON(w, r, StatusResponse{Name: s.Store.Get().Name, Player: s.Player.Status(), UpNext: up})
 }
 
 func (s *Server) control(w http.ResponseWriter, r *http.Request) {
@@ -144,13 +145,11 @@ func (s *Server) preview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "nothing shown yet")
 		return
 	}
-	w.Header().Set("Content-Type", "image/png")
-	w.Header().Set("Cache-Control", "no-store")
-	w.Write(b)
+	writeBody(w, r, "image/png", revalidate, b)
 }
 
 func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.Store.Get().Redacted())
+	getJSON(w, r, s.Store.Get().Redacted())
 }
 
 // putSettings replaces every setting except sources, which have their own
@@ -187,7 +186,7 @@ func (s *Server) listSources(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, v)
 	}
-	writeJSON(w, http.StatusOK, out)
+	getJSON(w, r, out)
 }
 
 func (s *Server) createSource(w http.ResponseWriter, r *http.Request) {
@@ -289,7 +288,7 @@ func (s *Server) listPhotos(w http.ResponseWriter, r *http.Request) {
 			out = append(out, ph)
 		}
 	}
-	writeJSON(w, http.StatusOK, out)
+	getJSON(w, r, out)
 }
 
 func (s *Server) thumb(w http.ResponseWriter, r *http.Request) {
@@ -302,15 +301,16 @@ func (s *Server) serveThumb(w http.ResponseWriter, r *http.Request, t Thumbnaile
 		writeError(w, http.StatusNotFound, "no such photo")
 		return
 	}
-	b, err := t.Thumb(ph)
+	b, err := t.Thumb(r.Context(), ph)
+	if r.Context().Err() != nil {
+		return // the app stopped waiting; nobody is there to answer
+	}
 	if err != nil {
 		s.logf("thumb %s: %v", ph.ID, err)
 		writeError(w, http.StatusInternalServerError, "could not make a thumbnail")
 		return
 	}
-	w.Header().Set("Content-Type", "image/jpeg")
-	w.Header().Set("Cache-Control", "private, max-age=86400")
-	w.Write(b)
+	writeBody(w, r, "image/jpeg", dayLong, b)
 }
 
 func (s *Server) device(w http.ResponseWriter, r *http.Request) {
@@ -428,20 +428,28 @@ func sameOrigin(next http.Handler) http.Handler {
 }
 
 // staticHandler serves the PWA. Unknown paths fall back to index.html so
-// client-side routes work after a reload.
+// client-side routes work after a reload. Every file is revalidated by ETag:
+// a new build of the frame's software is picked up on the next visit, and an
+// unchanged one costs a 304 per file.
 func staticHandler(fsys fs.FS) http.Handler {
 	files := http.FileServerFS(fsys)
+	tags := staticETags(fsys)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := strings.TrimPrefix(r.URL.Path, "/")
-		if p == "sw.js" || p == "" || p == "index.html" {
-			w.Header().Set("Cache-Control", "no-cache")
-		}
 		if p != "" {
 			if _, err := fs.Stat(fsys, p); err != nil {
 				r = r.Clone(r.Context())
 				r.URL.Path = "/"
+				p = ""
 			}
 		}
+		if p == "" {
+			p = "index.html"
+		}
+		if tag := tags[p]; tag != "" {
+			w.Header().Set("ETag", tag) // http.ServeContent answers If-None-Match from it
+		}
+		w.Header().Set("Cache-Control", revalidate)
 		files.ServeHTTP(w, r)
 	})
 }

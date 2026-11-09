@@ -138,6 +138,7 @@ func run(o options) error {
 		Ready:           ready,
 		Adjustment:      adjustments.Get,
 		StatePath:       filepath.Join(o.dataDir, "state.json"),
+		PreviewPath:     filepath.Join(o.dataDir, "preview.png"),
 		InfoLines:       func() []string { return infoLines(o.listen) },
 		Logger:          logger,
 	})
@@ -164,6 +165,15 @@ func run(o options) error {
 		}
 	}
 
+	// One limit for both sizes: a screenful of thumbnail requests and the
+	// editor's larger image must not decode more than two photos at a time
+	// between them. Thumbnails are also made ahead of time, one by one, so
+	// the app rarely has to wait for any.
+	limiter := thumbs.NewLimiter(2)
+	small := thumbs.New(filepath.Join(o.dataDir, "thumbs"), 320, limiter)
+	large := thumbs.New(filepath.Join(o.dataDir, "thumbs", "large"), 1280, limiter)
+	go warmThumbs(ctx, lib, small, logger)
+
 	srv := &http.Server{
 		Addr: o.listen,
 		Handler: (&api.Server{
@@ -171,8 +181,8 @@ func run(o options) error {
 			Library:     lib,
 			Player:      p,
 			Adjustments: adjustments,
-			Thumbs:      thumbs.New(filepath.Join(o.dataDir, "thumbs"), 320),
-			Images:      thumbs.New(filepath.Join(o.dataDir, "thumbs", "large"), 1280),
+			Thumbs:      small,
+			Images:      large,
 			UploadDir:   factory.UploadDir,
 			Device:      sysinfo.Reader{Version: version.String()}.Read,
 			Restart:     stop, // exits cleanly; systemd starts us again
@@ -196,6 +206,22 @@ func run(o options) error {
 	srv.Shutdown(shutdownCtx)
 	<-playerDone // the panel is powered off before we exit
 	return nil
+}
+
+// warmThumbs makes thumbnails for new photos whenever the library changes.
+func warmThumbs(ctx context.Context, lib *library.Library, c *thumbs.Cache, logger *log.Logger) {
+	changed := lib.Subscribe()
+	for {
+		start := time.Now()
+		if n := c.Warm(ctx, lib.Photos()); n > 0 {
+			logger.Printf("thumbs: made %d in %s", n, time.Since(start).Round(time.Second))
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-changed:
+		}
+	}
 }
 
 func openDisplay(o options, m *inky.Model) (panel, func() error, error) {

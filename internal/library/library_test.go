@@ -104,6 +104,26 @@ func TestChangedFires(t *testing.T) {
 	}
 }
 
+// Every subscriber hears about a change, alongside Changed.
+func TestSubscribeFiresForEachSubscriber(t *testing.T) {
+	l := New(func(config.Source) (Source, error) { return &stubSource{}, nil })
+	a, b := l.Subscribe(), l.Subscribe()
+	l.Configure(nil)
+	l.Configure(nil) // coalesced: at most one value pending
+	for name, c := range map[string]<-chan struct{}{"a": a, "b": b, "Changed": l.Changed()} {
+		select {
+		case <-c:
+		default:
+			t.Fatalf("%s was not signalled", name)
+		}
+		select {
+		case <-c:
+			t.Fatalf("%s holds more than one pending value", name)
+		default:
+		}
+	}
+}
+
 func TestPhotoIDStable(t *testing.T) {
 	if PhotoID("s", "a/b.jpg") != PhotoID("s", "a/b.jpg") || PhotoID("s", "a") == PhotoID("s", "b") {
 		t.Fatal("PhotoID not stable/unique")

@@ -100,6 +100,10 @@ type Deps struct {
 	Adjustment func(photoID string) adjust.Adjustment
 	// StatePath persists the on-screen photo across restarts. Optional.
 	StatePath string
+	// PreviewPath keeps the last image sent to the panel, so the app has a
+	// preview straight after a restart instead of only once the next photo
+	// is shown, which can be hours away. Optional.
+	PreviewPath string
 	// InfoLines returns the text for the welcome and info screens.
 	InfoLines func() []string
 	Now       func() time.Time
@@ -602,6 +606,11 @@ func (p *Player) present(ctx context.Context, img *image.Paletted, o config.Orie
 		commit()
 	}
 	p.mu.Unlock()
+	if (err == nil || missing) && p.d.PreviewPath != "" {
+		if werr := config.WriteFileAtomic(p.d.PreviewPath, buf.Bytes(), 0o644); werr != nil {
+			p.d.Logger.Printf("player: save preview: %v", werr)
+		}
+	}
 	switch {
 	case missing && !wasMissing:
 		p.d.Logger.Printf("player: %v; carrying on without a panel and trying again at each refresh", err)
@@ -695,6 +704,15 @@ func (p *Player) restore() {
 	b, err := os.ReadFile(p.d.StatePath)
 	if err != nil {
 		return
+	}
+	if p.d.PreviewPath != "" {
+		// The panel keeps its image without power, so the saved preview is
+		// still what it shows.
+		if png, err := os.ReadFile(p.d.PreviewPath); err == nil && len(png) > 0 {
+			p.mu.Lock()
+			p.preview = png
+			p.mu.Unlock()
+		}
 	}
 	var st persisted
 	if err := json.Unmarshal(b, &st); err != nil {

@@ -1,6 +1,7 @@
 package player
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"image"
@@ -151,16 +152,25 @@ func start(t *testing.T, photos []library.Photo, statePath string, mutate func(*
 			defer h.adjMu.Unlock()
 			return h.adj[id]
 		},
-		StatePath:  statePath,
-		Logger:     log.New(testWriter{t}, "", 0),
-		RetryDelay: 50 * time.Millisecond,
-		Seed:       1,
+		StatePath:   statePath,
+		PreviewPath: previewPath(statePath),
+		Logger:      log.New(testWriter{t}, "", 0),
+		RetryDelay:  50 * time.Millisecond,
+		Seed:        1,
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	h.cancel, h.done = cancel, make(chan struct{})
 	go func() { h.p.Run(ctx); close(h.done) }()
 	t.Cleanup(h.stop)
 	return h
+}
+
+// previewPath puts the preview next to the state file, as main does.
+func previewPath(statePath string) string {
+	if statePath == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(statePath), "preview.png")
 }
 
 func (h *harness) stop() {
@@ -194,10 +204,16 @@ func TestRestartDoesNotRefreshEarly(t *testing.T) {
 	first := h.p.Status().Current.ID
 	h.stop()
 
+	shown := h.p.Preview()
+
 	h2 := start(t, photos, state, nil)
 	h2.disp.expectNone(t)
 	if st := h2.p.Status(); st.Current == nil || st.Current.ID != first {
 		t.Fatalf("restored status = %+v", st)
+	}
+	// The app must have a preview without waiting for the next photo.
+	if got := h2.p.Preview(); len(got) == 0 || !bytes.Equal(got, shown) {
+		t.Fatalf("preview after restart: %d bytes, want the %d shown before", len(got), len(shown))
 	}
 }
 

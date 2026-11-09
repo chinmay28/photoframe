@@ -29,7 +29,7 @@ func (s *Server) getAdjustment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "no such photo")
 		return
 	}
-	writeJSON(w, http.StatusOK, AdjustmentView{Photo: ph, Adjustment: s.Adjustments.Get(ph.ID), OnScreen: s.onScreen(ph.ID)})
+	getJSON(w, r, AdjustmentView{Photo: ph, Adjustment: s.Adjustments.Get(ph.ID), OnScreen: s.onScreen(ph.ID)})
 }
 
 // putAdjustment replaces a photo's adjustment; a zero adjustment resets it.
