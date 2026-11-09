@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chinmay28/photoframe/internal/adjust"
 	"github.com/chinmay28/photoframe/internal/config"
 	"github.com/chinmay28/photoframe/internal/library"
 )
@@ -126,6 +127,8 @@ type harness struct {
 	disp     *fakeDisplay
 	lib      *fakeLib
 	settings config.Settings
+	adjMu    sync.Mutex
+	adj      map[string]adjust.Adjustment
 	cancel   context.CancelFunc
 	done     chan struct{}
 }
@@ -143,10 +146,15 @@ func start(t *testing.T, photos []library.Photo, statePath string, mutate func(*
 		Display: h.disp, Library: h.lib,
 		Settings:        func() config.Settings { return h.settings },
 		SettingsChanged: make(chan struct{}),
-		StatePath:       statePath,
-		Logger:          log.New(testWriter{t}, "", 0),
-		RetryDelay:      50 * time.Millisecond,
-		Seed:            1,
+		Adjustment: func(id string) adjust.Adjustment {
+			h.adjMu.Lock()
+			defer h.adjMu.Unlock()
+			return h.adj[id]
+		},
+		StatePath:  statePath,
+		Logger:     log.New(testWriter{t}, "", 0),
+		RetryDelay: 50 * time.Millisecond,
+		Seed:       1,
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	h.cancel, h.done = cancel, make(chan struct{})
@@ -391,5 +399,112 @@ func TestRestartAfterNoPanelDrawsImmediately(t *testing.T) {
 	h2.wait(t, 1)
 	if h2.p.Status().PanelMissing {
 		t.Fatal("still marked missing after drawing")
+	}
+}
+
+// allIndex reports whether every pixel of img is palette index i.
+func allIndex(img *image.Paletted, i uint8) bool {
+	for _, px := range img.Pix {
+		if px != i {
+			return false
+		}
+	}
+	return true
+}
+
+func TestPhotoAdjustmentIsApplied(t *testing.T) {
+	photos := makePhotos(t, 1) // black PNGs
+	h := start(t, photos, "", nil)
+	h.wait(t, 1)
+	if !allIndex(h.disp.shown[0], 0) {
+		t.Fatal("unadjusted black photo is not all black")
+	}
+
+	h.adjMu.Lock()
+	h.adj = map[string]adjust.Adjustment{photos[0].ID: {Brightness: 1}}
+	h.adjMu.Unlock()
+	h.p.Do(Refresh)
+	h.wait(t, 1)
+	if !allIndex(h.disp.shown[1], 1) {
+		t.Fatal("brightness +100% did not turn the black photo white")
+	}
+}
+
+func TestStatusUsesLatestPhotoDetails(t *testing.T) {
+	photos := makePhotos(t, 1)
+	state := filepath.Join(t.TempDir(), "state.json")
+	h := start(t, photos, state, nil)
+	h.wait(t, 1)
+	h.stop()
+
+	// The photo gained a name since it was shown and saved.
+	photos[0].Name = "IMG_0001.png"
+	h2 := start(t, photos, state, nil)
+	h2.disp.expectNone(t)
+	if st := h2.p.Status(); st.Current == nil || st.Current.Name != "IMG_0001.png" {
+		t.Fatalf("current = %+v, want the library's name", st.Current)
+	}
+}
+
+func TestShowPutsChosenPhotoOnScreen(t *testing.T) {
+	photos := makePhotos(t, 5)
+	h := start(t, photos, "", nil)
+	h.wait(t, 1)
+	target := h.p.UpNext(4)[3].ID
+	if err := h.p.Show(target); err != nil {
+		t.Fatal(err)
+	}
+	h.wait(t, 1)
+	if st := h.p.Status(); st.Current == nil || st.Current.ID != target {
+		t.Fatalf("current = %+v, want %s", st.Current, target)
+	}
+	if err := h.p.Show("nope"); !errors.Is(err, ErrNoPhoto) {
+		t.Fatalf("unknown photo: err = %v", err)
+	}
+}
+
+func TestShowKeepsOnlyLatestRequest(t *testing.T) {
+	photos := makePhotos(t, 3)
+	p := New(Deps{Display: newDisplay(), Library: &fakeLib{photos: photos, changed: make(chan struct{}, 1)},
+		Settings: config.Default, SettingsChanged: make(chan struct{})})
+	// Not running: requests pile up, and only the last should remain.
+	for _, ph := range photos {
+		if err := p.Show(ph.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := <-p.jumps; got != photos[2].ID || len(p.jumps) != 0 {
+		t.Fatalf("pending = %s (+%d), want only %s", got, len(p.jumps), photos[2].ID)
+	}
+}
+
+func TestMoveReordersQueue(t *testing.T) {
+	photos := makePhotos(t, 5)
+	h := start(t, photos, "", nil)
+	h.wait(t, 1)
+	up := h.p.UpNext(4)
+
+	if err := h.p.Move(up[3].ID, Front); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.p.UpNext(1)[0].ID; got != up[3].ID {
+		t.Fatalf("after front: next = %s, want %s", got, up[3].ID)
+	}
+	if err := h.p.Move(up[3].ID, Back); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.p.UpNext(4); got[3].ID != up[3].ID || got[0].ID != up[0].ID {
+		t.Fatalf("after back: queue = %v", got)
+	}
+	h.disp.expectNone(t) // reordering never refreshes the panel
+
+	if err := h.p.Move(h.p.Status().Current.ID, Front); !errors.Is(err, ErrOnScreen) {
+		t.Fatalf("moving the current photo: err = %v", err)
+	}
+	if err := h.p.Move("nope", Back); !errors.Is(err, ErrNoPhoto) {
+		t.Fatalf("unknown photo: err = %v", err)
+	}
+	if err := h.p.Move(up[0].ID, "sideways"); err == nil {
+		t.Fatal("unknown position accepted")
 	}
 }

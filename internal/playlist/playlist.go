@@ -5,6 +5,7 @@ package playlist
 
 import (
 	"math/rand"
+	"slices"
 	"sort"
 	"time"
 
@@ -25,6 +26,15 @@ type Playlist struct {
 	pos     int      // index of the current photo in history, -1 if none
 	deck    []string // shuffle order of photos not yet shown this cycle
 	shown   map[string]bool
+	// pinned are photos to show next, first first (PlayNext).
+	pinned []string
+	// deferred maps photos sent to the back (PlayLast) to how many other
+	// photos must be shown before them.
+	deferred map[string]int
+	// anchor is the last photo the order itself chose. Sorted orders carry
+	// on after it, so showing a queued or jumped-to photo does not lose the
+	// place.
+	anchor string
 }
 
 // New returns an empty playlist. seed makes shuffling reproducible in tests.
@@ -44,32 +54,20 @@ func (p *Playlist) Current() string {
 // restoring state after a restart.
 func (p *Playlist) SetCurrent(id string) {
 	p.push(id)
+	p.anchor = id
 }
 
 // Upcoming returns up to n photos that Next would show, in order, without
-// changing state.
+// changing state. n < 0 returns every photo that is coming up.
 func (p *Playlist) Upcoming(photos []library.Photo, order config.Order, now time.Time, n int) []library.Photo {
 	byID := index(photos)
-	var out []library.Photo
-	seen := map[string]bool{p.Current(): true}
-	add := func(id string) bool {
-		if ph, ok := byID[id]; ok && !seen[id] {
-			seen[id] = true
-			out = append(out, ph)
-		}
-		return len(out) >= n
+	ids := p.upcoming(byID, photos, order, now)
+	if n >= 0 && len(ids) > n {
+		ids = ids[:n]
 	}
-
-	// Photos stepped back past come first.
-	for i := p.pos + 1; i < len(p.history); i++ {
-		if add(p.history[i]) {
-			return out
-		}
-	}
-	for _, id := range p.sequence(photos, byID, order, now) {
-		if add(id) {
-			break
-		}
+	out := make([]library.Photo, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, byID[id])
 	}
 	return out
 }
@@ -81,29 +79,154 @@ func (p *Playlist) Next(photos []library.Photo, order config.Order, now time.Tim
 	if len(byID) == 0 {
 		return library.Photo{}, false
 	}
+	id := p.Current() // the only photo is the one on screen
+	if ids := p.upcoming(byID, photos, order, now); len(ids) > 0 {
+		id = ids[0]
+	}
+	if _, ok := byID[id]; !ok { // the current photo is gone and nothing else is left
+		return library.Photo{}, false
+	}
+	// Walking forward through history (after Prev) keeps that history.
+	moved := false
+	for j := p.pos + 1; j < len(p.history); j++ {
+		if p.history[j] == id {
+			p.pos, moved = j, true
+			break
+		}
+	}
+	_, wasDeferred := p.deferred[id]
+	if !moved && !wasDeferred && !slices.Contains(p.pinned, id) {
+		p.anchor = id // chosen by the order itself
+	}
+	if !moved {
+		p.push(id)
+	}
+	p.consume(id)
+	return byID[id], true
+}
 
-	// Walk forward through history first (after Prev).
-	for p.pos+1 < len(p.history) {
-		p.pos++
-		if ph, ok := byID[p.history[p.pos]]; ok {
-			p.shown[ph.ID] = true
-			return ph, true
+// Jump makes id the current photo, as if Next had chosen it: sorted orders
+// carry on from it. It reports false, changing nothing, when id is not
+// among photos.
+func (p *Playlist) Jump(photos []library.Photo, id string) bool {
+	if _, ok := index(photos)[id]; !ok {
+		return false
+	}
+	p.push(id)
+	p.anchor = id
+	p.consume(id)
+	return true
+}
+
+// PlayNext puts id at the front of the queue: it is shown next, ahead of
+// photos queued earlier. It reports false for the photo on screen.
+func (p *Playlist) PlayNext(id string) bool {
+	if id == "" || id == p.Current() {
+		return false
+	}
+	p.unqueue(id)
+	p.pinned = append([]string{id}, p.pinned...)
+	return true
+}
+
+// PlayLast sends id to the back of the queue: every other photo is shown
+// once before it. It reports false for the photo on screen or a photo that
+// is not among photos.
+func (p *Playlist) PlayLast(photos []library.Photo, id string) bool {
+	byID := index(photos)
+	if _, ok := byID[id]; !ok || id == p.Current() {
+		return false
+	}
+	p.unqueue(id)
+	others := len(byID) - 1
+	if _, ok := byID[p.Current()]; ok {
+		others-- // the photo on screen has had its turn
+	}
+	if p.deferred == nil {
+		p.deferred = map[string]int{}
+	}
+	p.deferred[id] = others
+	return true
+}
+
+// upcoming lists the IDs Next would show, in order: photos queued with
+// PlayNext, photos stepped back past, then the order's sequence with photos
+// sent back by PlayLast placed after the number of others they wait for.
+func (p *Playlist) upcoming(byID map[string]library.Photo, photos []library.Photo, order config.Order, now time.Time) []string {
+	cur := p.Current()
+	seen := map[string]bool{cur: true}
+	var out []string
+	add := func(id string) {
+		if _, ok := byID[id]; ok && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	for _, id := range p.pinned {
+		add(id)
+	}
+	for i := p.pos + 1; i < len(p.history); i++ {
+		if _, wait := p.deferred[p.history[i]]; !wait {
+			add(p.history[i])
 		}
 	}
 
-	seq := p.sequence(photos, byID, order, now)
-	var id string
-	if len(seq) > 0 {
-		id = seq[0]
-	} else {
-		id = p.Current() // the only photo is the one on screen
+	type held struct {
+		id   string
+		wait int
 	}
-	if order == config.OrderShuffle || (order == config.OrderOnThisDay && len(onThisDay(photos, now)) == 0) {
-		p.removeFromDeck(id)
+	var back []held
+	for id, wait := range p.deferred {
+		if _, ok := byID[id]; ok && !seen[id] {
+			back = append(back, held{id, wait})
+		}
 	}
+	sort.Slice(back, func(i, j int) bool {
+		if back[i].wait != back[j].wait {
+			return back[i].wait < back[j].wait
+		}
+		return back[i].id < back[j].id
+	})
+	release := func() {
+		for len(back) > 0 && back[0].wait <= len(out) {
+			add(back[0].id)
+			back = back[1:]
+		}
+	}
+	for _, id := range p.sequence(photos, byID, order, now) {
+		if _, wait := p.deferred[id]; wait {
+			continue
+		}
+		release()
+		add(id)
+	}
+	for _, h := range back {
+		add(h.id)
+	}
+	return out
+}
+
+// consume records that id is now on screen.
+func (p *Playlist) consume(id string) {
 	p.shown[id] = true
-	p.push(id)
-	return byID[id], true
+	p.removeFromDeck(id)
+	p.unqueue(id)
+	for other, wait := range p.deferred {
+		if wait > 0 {
+			p.deferred[other] = wait - 1
+		}
+	}
+}
+
+// unqueue drops id from the PlayNext and PlayLast queues.
+func (p *Playlist) unqueue(id string) {
+	for i, q := range p.pinned {
+		if q == id {
+			p.pinned = append(p.pinned[:i], p.pinned[i+1:]...)
+			break
+		}
+	}
+	delete(p.deferred, id)
 }
 
 // Prev steps back to the previously shown photo still in the library.
@@ -118,17 +241,17 @@ func (p *Playlist) Prev(photos []library.Photo) (library.Photo, bool) {
 	return library.Photo{}, false
 }
 
-// sequence returns candidate IDs in the order they would be shown next,
-// excluding the current photo.
+// sequence returns candidate IDs in the order they would be shown next.
+// Callers skip the photo on screen.
 func (p *Playlist) sequence(photos []library.Photo, byID map[string]library.Photo, order config.Order, now time.Time) []string {
 	switch order {
 	case config.OrderNewest:
-		return after(sorted(photos, false), p.Current())
+		return after(sorted(photos, false), p.anchor)
 	case config.OrderOldest:
-		return after(sorted(photos, true), p.Current())
+		return after(sorted(photos, true), p.anchor)
 	case config.OrderOnThisDay:
 		if c := onThisDay(photos, now); len(c) > 0 {
-			return after(sorted(c, true), p.Current())
+			return after(sorted(c, true), p.anchor)
 		}
 	}
 	p.syncDeck(byID)

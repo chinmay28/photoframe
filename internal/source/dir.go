@@ -76,6 +76,7 @@ func (d *Dir) Sync(ctx context.Context) ([]library.Photo, error) {
 			Path:     path,
 			TakenAt:  d.takenAt(path, info),
 			Title:    folderTitle(rel),
+			Name:     e.Name(),
 		})
 		return nil
 	})

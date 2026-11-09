@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/chinmay28/photoframe/internal/adjust"
 	"github.com/chinmay28/photoframe/internal/api"
 	"github.com/chinmay28/photoframe/internal/buttons"
 	"github.com/chinmay28/photoframe/internal/config"
@@ -124,12 +125,18 @@ func run(o options) error {
 		}
 	}()
 
+	adjustments, err := adjust.Open(filepath.Join(o.dataDir, "adjustments.json"))
+	if err != nil {
+		return err
+	}
+
 	p := player.New(player.Deps{
 		Display:         disp,
 		Library:         lib,
 		Settings:        store.Get,
 		SettingsChanged: store.Subscribe(),
 		Ready:           ready,
+		Adjustment:      adjustments.Get,
 		StatePath:       filepath.Join(o.dataDir, "state.json"),
 		InfoLines:       func() []string { return infoLines(o.listen) },
 		Logger:          logger,
@@ -160,15 +167,17 @@ func run(o options) error {
 	srv := &http.Server{
 		Addr: o.listen,
 		Handler: (&api.Server{
-			Store:     store,
-			Library:   lib,
-			Player:    p,
-			Thumbs:    thumbs.New(filepath.Join(o.dataDir, "thumbs"), 320),
-			UploadDir: factory.UploadDir,
-			Device:    sysinfo.Reader{Version: version.String()}.Read,
-			Restart:   stop, // exits cleanly; systemd starts us again
-			Static:    web.FS(),
-			Logger:    logger,
+			Store:       store,
+			Library:     lib,
+			Player:      p,
+			Adjustments: adjustments,
+			Thumbs:      thumbs.New(filepath.Join(o.dataDir, "thumbs"), 320),
+			Images:      thumbs.New(filepath.Join(o.dataDir, "thumbs", "large"), 1280),
+			UploadDir:   factory.UploadDir,
+			Device:      sysinfo.Reader{Version: version.String()}.Read,
+			Restart:     stop, // exits cleanly; systemd starts us again
+			Static:      web.FS(),
+			Logger:      logger,
 		}).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}

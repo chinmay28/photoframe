@@ -13,7 +13,9 @@ import (
 	_ "image/png"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"time"
 
@@ -125,8 +127,24 @@ func (u *URLImage) photos(m *urlMeta) []library.Photo {
 	}
 	return []library.Photo{{
 		ID: library.PhotoID(u.SourceID, m.File), SourceID: u.SourceID,
-		Path: p, TakenAt: m.FetchedAt,
+		Path: p, TakenAt: m.FetchedAt, Name: urlFileName(u.URL),
 	}}
+}
+
+// urlFileName is the last path segment of an image URL, or "" if it has none.
+func urlFileName(raw string) string {
+	pu, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	name := path.Base(pu.Path)
+	if name == "/" || name == "." {
+		return ""
+	}
+	if un, err := url.PathUnescape(name); err == nil {
+		name = un
+	}
+	return name
 }
 
 func (u *URLImage) loadMeta() *urlMeta {

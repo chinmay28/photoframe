@@ -9,6 +9,7 @@ import (
 	"image/draw"
 	"sync"
 
+	"github.com/chinmay28/photoframe/internal/adjust"
 	"github.com/chinmay28/photoframe/internal/config"
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/gofont/gobold"
@@ -27,6 +28,8 @@ type Options struct {
 	Dither        config.Dither
 	Palette       color.Palette
 	Caption       string // drawn bottom-left when non-empty
+	// Adjust is the photo's own adjustment; its Fit, when set, overrides Fit.
+	Adjust adjust.Adjustment
 }
 
 // OptionsFrom builds Options from settings for a panel of the given native
@@ -52,12 +55,24 @@ func OptionsFrom(s config.Settings, panelW, panelH int, pal color.Palette) Optio
 }
 
 // MaxSourceSide is how large Load should keep a source image for a target of
-// the given size: enough headroom for cropping without wasting memory.
-func MaxSourceSide(w, h int) int { return 2 * max(w, h) }
+// the given size and zoom: enough headroom for cropping without wasting
+// memory. Zooms beyond 2× get no extra detail, to bound memory on a Pi Zero.
+func MaxSourceSide(w, h int, zoom float64) int {
+	return int(2 * float64(max(w, h)) * min(max(zoom, 1), 2))
+}
 
 // Render produces the final paletted image in logical orientation.
 func Render(src *image.RGBA, o Options) *image.Paletted {
-	fitted := Fit(src, o.Width, o.Height, o.Fit, o.Border)
+	a := o.Adjust
+	src = Rotate(src, a.Rotate)
+	mode := o.Fit
+	if a.Fit != "" {
+		mode = a.Fit
+	}
+	sb := src.Bounds()
+	win := View(src, sb.Dx(), sb.Dy(), o.Width, o.Height, mode, a.ZoomOrOne(), a.Position)
+	fitted := Frame(src, win, o.Width, o.Height, o.Border)
+	Brighten(fitted, a.Brightness)
 	Adjust(fitted, o.Saturation, o.Contrast)
 	out := Dither(fitted, o.Palette, o.Dither)
 	if o.Caption != "" {

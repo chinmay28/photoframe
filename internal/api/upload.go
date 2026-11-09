@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/chinmay28/photoframe/internal/adjust"
 	"github.com/chinmay28/photoframe/internal/config"
 	"github.com/chinmay28/photoframe/internal/source"
 )
@@ -174,6 +175,12 @@ func (s *Server) deletePhoto(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Thumbs.Remove(ph.ID)
+	if s.Images != nil {
+		s.Images.Remove(ph.ID)
+	}
+	if _, err := s.Adjustments.Set(ph.ID, adjust.Adjustment{}); err != nil {
+		s.logf("delete %s: forget adjustment: %v", ph.ID, err)
+	}
 	if err := s.Library.SyncSource(r.Context(), src.ID); err != nil {
 		s.logf("delete: rescan %s: %v", src.ID, err)
 	}
