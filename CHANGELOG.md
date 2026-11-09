@@ -19,6 +19,11 @@ commit: one more than `main`'s current count.
 - A source build is skipped when the installed version already matches
   `main`, and a run started while another is still going waits for it
   instead of building alongside it.
+- Quickstart no longer reports "already installed" for an app that isn't
+  running. It skips only when the app answers with the expected version.
+  Otherwise it reinstalls, and shows the service log if the app still
+  doesn't come up. After installing, it also prints the Pi's IP addresses,
+  for phones that can't open `.local` names.
 
 ## v2026.11.6
 
