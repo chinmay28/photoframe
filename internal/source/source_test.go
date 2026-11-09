@@ -9,10 +9,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/chinmay28/photoframe/internal/library"
 )
 
 func pngBytes(t *testing.T) []byte {
@@ -51,9 +54,10 @@ func TestDirListsImagesRecursively(t *testing.T) {
 	if len(photos) != 2 {
 		t.Fatalf("got %d photos: %+v", len(photos), photos)
 	}
-	titles := map[string]bool{}
+	titles, names := map[string]bool{}, map[string]bool{}
 	for _, p := range photos {
 		titles[p.Title] = true
+		names[p.Name] = true
 		if p.TakenAt.IsZero() {
 			t.Error("TakenAt should fall back to mtime")
 		}
@@ -63,6 +67,9 @@ func TestDirListsImagesRecursively(t *testing.T) {
 	}
 	if !titles["Emerald Bay"] || !titles[""] {
 		t.Fatalf("titles = %v", titles)
+	}
+	if !names["a.jpg"] || !names["b.PNG"] {
+		t.Fatalf("names = %v", names)
 	}
 }
 
@@ -96,7 +103,7 @@ func immichServer(t *testing.T, album string, downloads *int32) *httptest.Server
 }
 
 const albumJSON = `{"assets":[
- {"id":"a1","type":"IMAGE","fileCreatedAt":"2024-01-01T00:00:00Z","exifInfo":{"dateTimeOriginal":"2023-08-14T10:00:00Z","city":"South Lake Tahoe","country":"United States of America"}},
+ {"id":"a1","type":"IMAGE","originalFileName":"IMG_0042.HEIC","fileCreatedAt":"2024-01-01T00:00:00Z","exifInfo":{"dateTimeOriginal":"2023-08-14T10:00:00Z","city":"South Lake Tahoe","country":"United States of America"}},
  {"id":"v1","type":"VIDEO","fileCreatedAt":"2024-01-01T00:00:00Z"},
  {"id":"a2","type":"IMAGE","fileCreatedAt":"2024-02-02T00:00:00Z"}
 ]}`
@@ -116,12 +123,12 @@ func TestImmichSyncDownloadsAndCaches(t *testing.T) {
 	}
 	var tahoe bool
 	for _, p := range photos {
-		if p.Title == "South Lake Tahoe, United States of America" && p.TakenAt.Year() == 2023 {
+		if p.Title == "South Lake Tahoe, United States of America" && p.TakenAt.Year() == 2023 && p.Name == "IMG_0042.HEIC" {
 			tahoe = true
 		}
 	}
 	if !tahoe {
-		t.Fatalf("exif place/date not used: %+v", photos)
+		t.Fatalf("exif place/date or file name not used: %+v", photos)
 	}
 
 	// Second sync: nothing new to download.
@@ -137,6 +144,9 @@ func TestImmichSyncDownloadsAndCaches(t *testing.T) {
 	photos, err = im.Sync(context.Background())
 	if err == nil || len(photos) != 2 {
 		t.Fatalf("offline sync = %d photos, err %v", len(photos), err)
+	}
+	if !slices.ContainsFunc(photos, func(p library.Photo) bool { return p.Name == "IMG_0042.HEIC" }) {
+		t.Fatalf("cached photos lost their file names: %+v", photos)
 	}
 	if !strings.HasPrefix(err.Error(), "cannot reach 127.0.0.1:") {
 		t.Fatalf("offline error = %q, want a short host message", err)
@@ -212,5 +222,18 @@ func TestURLImageRejectsNonImage(t *testing.T) {
 	u := &URLImage{SourceID: "art", URL: srv.URL, CacheDir: t.TempDir()}
 	if photos, err := u.Sync(context.Background()); err == nil || len(photos) != 0 {
 		t.Fatalf("got %v, %v", photos, err)
+	}
+}
+
+func TestURLFileName(t *testing.T) {
+	for raw, want := range map[string]string{
+		"https://example.com/art/today%20big.jpg?x=1": "today big.jpg",
+		"https://example.com/":                        "",
+		"https://example.com":                         "",
+		"https://example.com/feed/":                   "feed",
+	} {
+		if got := urlFileName(raw); got != want {
+			t.Errorf("urlFileName(%q) = %q, want %q", raw, got, want)
+		}
 	}
 }

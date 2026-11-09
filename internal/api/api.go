@@ -53,18 +53,20 @@ type Thumbnailer interface {
 	Remove(id string)
 }
 
-// Server wires the API to its collaborators. All fields except Static,
-// Restart and Logger are required.
+// Server wires the API to its collaborators. All fields except Images,
+// Static, Restart and Logger are required.
 type Server struct {
-	Store     Store
-	Library   Library
-	Player    Player
-	Thumbs    Thumbnailer
-	UploadDir func(sourceID string) string
-	Device    func() sysinfo.Info
-	Restart   func() // restarts the service; nil disables the endpoint
-	Static    fs.FS  // the PWA; nil serves only the API
-	Logger    *log.Logger
+	Store       Store
+	Library     Library
+	Player      Player
+	Adjustments Adjustments
+	Thumbs      Thumbnailer
+	Images      Thumbnailer // larger renditions for the editor; nil uses Thumbs
+	UploadDir   func(sourceID string) string
+	Device      func() sysinfo.Info
+	Restart     func() // restarts the service; nil disables the endpoint
+	Static      fs.FS  // the PWA; nil serves only the API
+	Logger      *log.Logger
 }
 
 // Handler returns the HTTP handler.
@@ -83,6 +85,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/sources/{id}/photos", s.upload)
 	mux.HandleFunc("GET /api/photos", s.listPhotos)
 	mux.HandleFunc("GET /api/photos/{id}/thumb", s.thumb)
+	mux.HandleFunc("GET /api/photos/{id}/image", s.image)
+	mux.HandleFunc("GET /api/photos/{id}/adjustment", s.getAdjustment)
+	mux.HandleFunc("PUT /api/photos/{id}/adjustment", s.putAdjustment)
+	mux.HandleFunc("DELETE /api/photos/{id}/adjustment", s.deleteAdjustment)
 	mux.HandleFunc("DELETE /api/photos/{id}", s.deletePhoto)
 	mux.HandleFunc("GET /api/device", s.device)
 	mux.HandleFunc("POST /api/device/restart", s.restart)
@@ -282,12 +288,16 @@ func (s *Server) listPhotos(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) thumb(w http.ResponseWriter, r *http.Request) {
+	s.serveThumb(w, r, s.Thumbs)
+}
+
+func (s *Server) serveThumb(w http.ResponseWriter, r *http.Request, t Thumbnailer) {
 	ph, ok := s.Library.Photo(r.PathValue("id"))
 	if !ok {
 		writeError(w, http.StatusNotFound, "no such photo")
 		return
 	}
-	b, err := s.Thumbs.Thumb(ph)
+	b, err := t.Thumb(ph)
 	if err != nil {
 		s.logf("thumb %s: %v", ph.ID, err)
 		writeError(w, http.StatusInternalServerError, "could not make a thumbnail")

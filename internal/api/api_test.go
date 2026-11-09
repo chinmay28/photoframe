@@ -17,6 +17,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/chinmay28/photoframe/internal/adjust"
 	"github.com/chinmay28/photoframe/internal/config"
 	"github.com/chinmay28/photoframe/internal/library"
 	"github.com/chinmay28/photoframe/internal/player"
@@ -53,11 +54,14 @@ func (l *fakeLib) SyncSource(_ context.Context, id string) error {
 }
 
 type fakePlayer struct {
-	cmds []player.Command
+	cmds    []player.Command
+	current *library.Photo
 }
 
-func (p *fakePlayer) Do(c player.Command) bool     { p.cmds = append(p.cmds, c); return true }
-func (p *fakePlayer) Status() player.Status        { return player.Status{Screen: player.ScreenPhoto} }
+func (p *fakePlayer) Do(c player.Command) bool { p.cmds = append(p.cmds, c); return true }
+func (p *fakePlayer) Status() player.Status {
+	return player.Status{Screen: player.ScreenPhoto, Current: p.current}
+}
 func (p *fakePlayer) Preview() []byte              { return []byte("png") }
 func (p *fakePlayer) UpNext(n int) []library.Photo { return nil }
 
@@ -69,6 +73,7 @@ func (f *fakeThumbs) Remove(id string)                    { f.removed = append(f
 type env struct {
 	srv    *httptest.Server
 	store  *config.Store
+	adj    *adjust.Store
 	lib    *fakeLib
 	player *fakePlayer
 	thumbs *fakeThumbs
@@ -82,9 +87,13 @@ func newEnv(t *testing.T) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := &env{store: store, lib: &fakeLib{}, player: &fakePlayer{}, thumbs: &fakeThumbs{}, data: data}
+	adj, err := adjust.Open(filepath.Join(data, "adjustments.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := &env{store: store, adj: adj, lib: &fakeLib{}, player: &fakePlayer{}, thumbs: &fakeThumbs{}, data: data}
 	s := &Server{
-		Store: store, Library: e.lib, Player: e.player, Thumbs: e.thumbs,
+		Store: store, Library: e.lib, Player: e.player, Thumbs: e.thumbs, Adjustments: adj,
 		UploadDir: func(id string) string { return filepath.Join(data, "uploads", id) },
 		Device:    func() sysinfo.Info { return sysinfo.Info{Hostname: "photoframe"} },
 		Static:    fstest.MapFS{"index.html": {Data: []byte("<!doctype html>app")}, "app.js": {Data: []byte("js")}},
@@ -299,11 +308,15 @@ func TestDeleteUploadedPhoto(t *testing.T) {
 		{ID: "uploads-1", SourceID: "uploads", Path: inside},
 		{ID: "uploads-2", SourceID: "uploads", Path: outside},
 	}
+	e.adj.Set("uploads-1", adjust.Adjustment{Rotate: 90})
 	if resp := e.do(t, "DELETE", "/api/photos/uploads-1", nil); resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("status %d", resp.StatusCode)
 	}
 	if _, err := os.Stat(inside); !os.IsNotExist(err) {
 		t.Fatal("file not deleted")
+	}
+	if !e.adj.Get("uploads-1").IsZero() {
+		t.Fatal("deleted photo's adjustment was kept")
 	}
 	if resp := e.do(t, "DELETE", "/api/photos/uploads-2", nil); resp.StatusCode == http.StatusNoContent {
 		t.Fatal("deleted a file outside the upload folder")

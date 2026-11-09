@@ -135,11 +135,12 @@ rotation.
 ```
 cmd/photoframe       wiring, flags, signal handling
 internal/config      settings types, validation, atomic JSON store with change notifications
+internal/adjust      per-photo rotation, framing, zoom, alignment and brightness, stored by photo ID
 internal/source      Dir (uploads/folders), Immich, URL image sources
 internal/library     merges enabled sources into one catalogue; keeps cached photos on errors
 internal/playlist    next/previous: shuffle deck (no repeats per cycle), newest, oldest, on-this-day
 internal/schedule    when the next change is due, with quiet hours (including windows past midnight)
-internal/render      decode + EXIF orientation, smart/fill/fit, saturation/contrast,
+internal/render      decode + EXIF orientation, smart/fill/fit with zoom and alignment, saturation/contrast,
                      Floyd–Steinberg / Atkinson / ordered dithering, captions, info screens
 internal/inky        panel driver over spidev + GPIO character device (no cgo)
 internal/player      the slideshow loop: timer, commands, retries, state across restarts
@@ -182,6 +183,8 @@ All responses are JSON unless noted.
 | `POST /api/sources/{id}/sync` | sync now |
 | `POST /api/sources/{id}/photos` | multipart upload (field `photos`) into an upload source |
 | `GET /api/photos?source=id`, `GET /api/photos/{id}/thumb`, `DELETE /api/photos/{id}` | photos |
+| `GET /api/photos/{id}/image` | a larger rendition (1280 px) for the editor |
+| `GET/PUT/DELETE /api/photos/{id}/adjustment` | a photo's own rotation, framing, zoom, position and brightness; re-renders it if on screen |
 | `GET /api/device`, `POST /api/device/restart` | device info, restart service |
 
 The app has no login and is meant for your home network only. Requests

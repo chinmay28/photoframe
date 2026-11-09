@@ -99,6 +99,9 @@ const icons = {
   upload: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M5 20h14"/></svg>',
   sync: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.9-3M4 4v4h4M4 13a8 8 0 0 0 14.9 3M20 20v-4h-4"/></svg>',
   trash: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>',
+  adjust: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2v14a2 2 0 0 0 2 2h14M18 22V8a2 2 0 0 0-2-2H2"/></svg>',
+  rotl: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4v5h5M3.5 9A9 9 0 1 1 5 17"/></svg>',
+  rotr: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 4v5h-5M20.5 9A9 9 0 1 0 19 17"/></svg>',
 };
 const sourceTypes = {
   upload: { label: 'Stored on frame', icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3h8a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM12 15V8M9 11l3-3 3 3"/></svg>' },
@@ -177,6 +180,10 @@ function NowView(el) {
         <div class="preview${portrait ? ' portrait' : ''}" id="pv">
           ${p.screen ? `<span class="badge">${p.refreshing ? 'Updating…' : p.panelMissing ? 'Preview · no panel' : 'E-ink preview'}</span>` : '<div class="empty">Nothing on the frame yet</div>'}
         </div>
+        ${cur ? `<div class="row photo-meta">
+          <span class="filename" title="${esc(cur.name || '')}">${esc(cur.name || '')}</span>
+          <button type="button" class="link-btn" data-adjust="${esc(cur.id)}">${icons.adjust}Adjust</button>
+        </div>` : ''}
         <div class="row" style="padding:0 4px">
           <div class="grow">
             <div style="font-weight:600">${esc(cur ? (cur.title || monthYear(cur.takenAt) || 'Untitled') : (p.screen === 'welcome' ? 'Welcome screen' : '—'))}</div>
@@ -200,7 +207,8 @@ function NowView(el) {
       <section style="display:flex;flex-direction:column;gap:10px">
         <div class="row"><h2 style="margin:0;font-size:15px">Up next</h2><a href="#/sources" style="font-size:13px;text-decoration:none">Manage sources</a></div>
         ${status.upNext.length ? `<div class="thumbs">${status.upNext.map((ph) =>
-          `<img loading="lazy" src="/api/photos/${encodeURIComponent(ph.id)}/thumb" alt="${esc(ph.title || 'Queued photo')}">`).join('')}</div>`
+          `<button type="button" data-adjust="${esc(ph.id)}" title="${esc(ph.name || '')}" aria-label="Adjust ${esc(ph.name || ph.title || 'queued photo')}">
+            <img loading="lazy" src="/api/photos/${encodeURIComponent(ph.id)}/thumb" alt=""></button>`).join('')}</div>`
           : '<p class="hint">Nothing queued. Add photos in Sources.</p>'}
       </section>`;
 
@@ -214,6 +222,8 @@ function NowView(el) {
 
   el.onclick = async (e) => {
     if (e.target.closest('[data-retry]')) return load();
+    const adj = e.target.closest('[data-adjust]');
+    if (adj) return photoEditor(adj.dataset.adjust, () => setTimeout(load, 600));
     const b = e.target.closest('[data-cmd]');
     if (!b) return;
     b.disabled = true;
@@ -441,6 +451,254 @@ function sourceDialog(existing, onDone) {
     }
   };
   dlg.showModal();
+}
+
+// ---------- photo editor ----------
+
+// The panel's logical size; only its aspect ratio matters here.
+const PANEL = { w: 800, h: 480 };
+const fitModes = [['', 'Slideshow'], ['smart', 'Smart'], ['fill', 'Fill'], ['fit', 'Fit']];
+const fitNames = { smart: 'smart crop', fill: 'fill', fit: 'fit + border' };
+
+// viewWindow mirrors render.View on the frame: the region of a sw×sh photo,
+// in photo pixels, that fills a w×h output. pos works like CSS
+// object-position (0 = left/top edges aligned, 1 = right/bottom).
+function viewWindow(sw, sh, w, h, mode, zoom, pos) {
+  const wider = sw * h > sh * w;
+  let vw, vh;
+  if (mode === 'fit') [vw, vh] = wider ? [sw, (sw * h) / w] : [(sh * w) / h, sh];
+  else [vw, vh] = wider ? [(sh * w) / h, sh] : [sw, (sw * h) / w];
+  vw /= zoom; vh /= zoom;
+  const p = pos || { x: 0.5, y: 0.5 };
+  return { x: p.x * (sw - vw), y: p.y * (sh - vh), w: vw, h: vh };
+}
+
+function rotateImage(img, deg) {
+  const c = document.createElement('canvas');
+  const swap = deg % 180 !== 0;
+  c.width = swap ? img.naturalHeight : img.naturalWidth;
+  c.height = swap ? img.naturalWidth : img.naturalHeight;
+  const ctx = c.getContext('2d');
+  ctx.translate(c.width / 2, c.height / 2);
+  ctx.rotate((deg * Math.PI) / 180);
+  ctx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2);
+  return c;
+}
+
+// adjustmentBody sends only the fields that change something.
+function adjustmentBody(a) {
+  const out = {};
+  if (a.rotate) out.rotate = a.rotate;
+  if (a.fit) out.fit = a.fit;
+  if (a.zoom && a.zoom !== 1) out.zoom = a.zoom;
+  if (a.position) out.position = a.position;
+  if (a.brightness) out.brightness = a.brightness;
+  return out;
+}
+
+// photoEditor opens a sheet to rotate, frame, zoom, align and brighten one
+// photo. The frame remembers the result for that photo.
+async function photoEditor(id, onDone) {
+  const dlg = $('#dialog');
+  const path = `/api/photos/${encodeURIComponent(id)}`;
+  let view, settings;
+  try {
+    [view, settings] = await Promise.all([api.get(path + '/adjustment'), api.get('/api/settings')]);
+  } catch (err) { toast(err.message, true); return; }
+
+  const ph = view.photo;
+  const a = { rotate: 0, fit: '', zoom: 1, position: null, brightness: 0, ...view.adjustment };
+  const portrait = settings.display.orientation === 'portrait';
+  const [outW, outH] = portrait ? [PANEL.h, PANEL.w] : [PANEL.w, PANEL.h];
+  const border = settings.border === 'black' ? '#000' : '#fff';
+  const pct = (v) => `${v > 0 ? '+' : ''}${Math.round(v * 100)}%`;
+  const mode = () => a.fit || settings.fit;
+  let rotated = null;
+  let frame = 0;
+
+  const img = new Image();
+  img.onload = () => { rotated = rotateImage(img, a.rotate); draw(); };
+  img.onerror = () => { const s = $('[data-status]', dlg); if (s) s.textContent = 'Could not load the photo.'; };
+  img.src = path + '/image';
+
+  function alignGrid() {
+    const cells = [];
+    for (const y of [0, 0.5, 1]) {
+      for (const x of [0, 0.5, 1]) {
+        const on = a.position && a.position.x === x && a.position.y === y;
+        const label = `${['Top', 'Middle', 'Bottom'][y * 2]} ${['left', 'centre', 'right'][x * 2]}`;
+        cells.push(`<button type="button" data-align="${x},${y}" aria-pressed="${!!on}" aria-label="${label}" title="${label}"><span></span></button>`);
+      }
+    }
+    return `<div class="align-grid">${cells.join('')}</div>`;
+  }
+
+  function hint() {
+    const m = mode();
+    if (m === 'smart' && !a.position) return 'Smart crop picks the position on the frame. Drag the photo or tap an alignment to choose it yourself.';
+    if (m === 'fit') return 'The whole photo is shown with a border. Drag or tap an alignment to move it within the frame.';
+    return 'Drag the photo to choose what the frame shows.';
+  }
+
+  function render() {
+    dlg.innerHTML = `
+      <form method="dialog" class="editor">
+        <h2>Adjust photo</h2>
+        <div class="editor-stage${portrait ? ' portrait' : ''}" style="background:${border}">
+          <canvas data-canvas aria-label="Preview of the framed photo; drag to move it"></canvas>
+        </div>
+        <div class="filename" title="${esc(ph.name || '')}" data-status>${esc(ph.name || '')}</div>
+        <p class="hint" data-hint>${esc(hint())}</p>
+        <div class="row">
+          <span class="field">Rotate</span>
+          <div style="display:flex;gap:8px">
+            <button type="button" class="icon-btn" data-rotate="270" aria-label="Rotate left">${icons.rotl}</button>
+            <button type="button" class="icon-btn" data-rotate="90" aria-label="Rotate right">${icons.rotr}</button>
+          </div>
+        </div>
+        <div class="field">Framing</div>
+        ${seg(fitModes, a.fit, 'data-fit')}
+        <p class="hint">${a.fit ? `This photo always uses ${fitNames[a.fit]}.` : `Follows the slideshow setting, now ${fitNames[settings.fit]}.`}</p>
+        <div class="row align-row">
+          <div class="grow">
+            <label class="field"><span class="range-label">Zoom <b data-zoomv>${a.zoom.toFixed(1)}×</b></span>
+              <input type="range" min="1" max="4" step="0.1" value="${a.zoom}" data-zoom></label>
+            <label class="field"><span class="range-label">Brightness <b data-brightv>${pct(a.brightness)}</b></span>
+              <input type="range" min="-50" max="50" step="5" value="${Math.round(a.brightness * 100)}" data-bright></label>
+          </div>
+          <div><div class="field" style="margin-bottom:4px">Align</div>${alignGrid()}</div>
+        </div>
+        <div class="actions">
+          <button type="button" class="btn small" data-reset>Reset</button>
+          <span class="spacer"></span>
+          <button type="button" class="btn small" data-cancel>Cancel</button>
+          <button type="submit" class="btn primary small">Save</button>
+        </div>
+      </form>`;
+    bindDrag();
+    draw();
+  }
+
+  // draw paints the preview on the next animation frame.
+  function draw() {
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(paint);
+  }
+  function paint() {
+    const c = $('[data-canvas]', dlg);
+    if (!c || !rotated) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const cw = c.clientWidth;
+    c.width = Math.max(1, Math.round(cw * dpr));
+    c.height = Math.max(1, Math.round(((cw * outH) / outW) * dpr));
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = border;
+    ctx.fillRect(0, 0, c.width, c.height);
+    const win = viewWindow(rotated.width, rotated.height, outW, outH, mode(), a.zoom, a.position);
+    const k = c.width / win.w;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(rotated, -win.x * k, -win.y * k, rotated.width * k, rotated.height * k);
+    if (a.brightness) {
+      // Same as render.Brighten: shift every channel by brightness × 255.
+      const d = ctx.getImageData(0, 0, c.width, c.height);
+      const px = d.data;
+      const shift = a.brightness * 255;
+      for (let i = 0; i < px.length; i += 4) {
+        px[i] += shift; px[i + 1] += shift; px[i + 2] += shift; // Uint8ClampedArray clamps
+      }
+      ctx.putImageData(d, 0, 0);
+    }
+  }
+
+  function bindDrag() {
+    const c = $('[data-canvas]', dlg);
+    let start = null;
+    c.onpointerdown = (e) => {
+      if (!rotated) return;
+      c.setPointerCapture(e.pointerId);
+      const win = viewWindow(rotated.width, rotated.height, outW, outH, mode(), a.zoom, a.position);
+      const p = a.position || { x: 0.5, y: 0.5 };
+      start = { x: e.clientX, y: e.clientY, p, win, scale: win.w / c.clientWidth };
+    };
+    c.onpointermove = (e) => {
+      if (!start) return;
+      // Moving the photo right moves the window left over it.
+      const travelX = rotated.width - start.win.w;
+      const travelY = rotated.height - start.win.h;
+      const clamp = (v) => Math.min(1, Math.max(0, v));
+      const round = (v) => Math.round(v * 1000) / 1000;
+      a.position = {
+        x: Math.abs(travelX) < 0.5 ? 0.5 : round(clamp(start.p.x - ((e.clientX - start.x) * start.scale) / travelX)),
+        y: Math.abs(travelY) < 0.5 ? 0.5 : round(clamp(start.p.y - ((e.clientY - start.y) * start.scale) / travelY)),
+      };
+      draw();
+    };
+    c.onpointerup = c.onpointercancel = () => {
+      if (!start) return;
+      start = null;
+      $('[data-hint]', dlg).textContent = hint();
+      dlg.querySelectorAll('[data-align]').forEach((b) => {
+        const [x, y] = b.dataset.align.split(',').map(Number);
+        b.setAttribute('aria-pressed', String(!!a.position && a.position.x === x && a.position.y === y));
+      });
+    };
+  }
+
+  function close() {
+    cancelAnimationFrame(frame);
+    window.removeEventListener('resize', draw);
+    dlg.close();
+  }
+
+  dlg.onclick = async (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    if (b.matches('[data-cancel]')) close();
+    else if (b.dataset.rotate) {
+      a.rotate = (a.rotate + Number(b.dataset.rotate)) % 360;
+      if (img.complete && img.naturalWidth) rotated = rotateImage(img, a.rotate);
+      render();
+    } else if (b.dataset.fit !== undefined) {
+      a.fit = b.dataset.fit;
+      render();
+    } else if (b.dataset.align) {
+      const [x, y] = b.dataset.align.split(',').map(Number);
+      a.position = { x, y };
+      render();
+    } else if (b.matches('[data-reset]')) {
+      Object.assign(a, { rotate: 0, fit: '', zoom: 1, position: null, brightness: 0 });
+      if (img.complete && img.naturalWidth) rotated = rotateImage(img, 0);
+      render();
+    }
+  };
+  dlg.oninput = (e) => {
+    const t = e.target;
+    if (t.matches('[data-zoom]')) {
+      a.zoom = Number(t.value);
+      $('[data-zoomv]', dlg).textContent = `${a.zoom.toFixed(1)}×`;
+      draw();
+    } else if (t.matches('[data-bright]')) {
+      a.brightness = Number(t.value) / 100;
+      $('[data-brightv]', dlg).textContent = pct(a.brightness);
+      draw();
+    }
+  };
+  dlg.onchange = null;
+  dlg.onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const body = adjustmentBody(a);
+      const out = Object.keys(body).length ? await api.put(path + '/adjustment', body) : await api.del(path + '/adjustment');
+      close();
+      toast(out?.onScreen ? 'Saved — the frame is updating' : 'Saved for the next time this photo is shown');
+      onDone?.();
+    } catch (err) { toast(err.message, true); }
+  };
+  dlg.onclose = () => { cancelAnimationFrame(frame); window.removeEventListener('resize', draw); };
+  window.addEventListener('resize', draw);
+  render();
+  dlg.showModal();
+  draw(); // the canvas has a size only once the dialog is open
 }
 
 // ---------- Settings-backed views ----------

@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chinmay28/photoframe/internal/adjust"
 	"github.com/chinmay28/photoframe/internal/config"
 	"github.com/chinmay28/photoframe/internal/library"
 )
@@ -126,6 +127,8 @@ type harness struct {
 	disp     *fakeDisplay
 	lib      *fakeLib
 	settings config.Settings
+	adjMu    sync.Mutex
+	adj      map[string]adjust.Adjustment
 	cancel   context.CancelFunc
 	done     chan struct{}
 }
@@ -143,10 +146,15 @@ func start(t *testing.T, photos []library.Photo, statePath string, mutate func(*
 		Display: h.disp, Library: h.lib,
 		Settings:        func() config.Settings { return h.settings },
 		SettingsChanged: make(chan struct{}),
-		StatePath:       statePath,
-		Logger:          log.New(testWriter{t}, "", 0),
-		RetryDelay:      50 * time.Millisecond,
-		Seed:            1,
+		Adjustment: func(id string) adjust.Adjustment {
+			h.adjMu.Lock()
+			defer h.adjMu.Unlock()
+			return h.adj[id]
+		},
+		StatePath:  statePath,
+		Logger:     log.New(testWriter{t}, "", 0),
+		RetryDelay: 50 * time.Millisecond,
+		Seed:       1,
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	h.cancel, h.done = cancel, make(chan struct{})
@@ -391,5 +399,49 @@ func TestRestartAfterNoPanelDrawsImmediately(t *testing.T) {
 	h2.wait(t, 1)
 	if h2.p.Status().PanelMissing {
 		t.Fatal("still marked missing after drawing")
+	}
+}
+
+// allIndex reports whether every pixel of img is palette index i.
+func allIndex(img *image.Paletted, i uint8) bool {
+	for _, px := range img.Pix {
+		if px != i {
+			return false
+		}
+	}
+	return true
+}
+
+func TestPhotoAdjustmentIsApplied(t *testing.T) {
+	photos := makePhotos(t, 1) // black PNGs
+	h := start(t, photos, "", nil)
+	h.wait(t, 1)
+	if !allIndex(h.disp.shown[0], 0) {
+		t.Fatal("unadjusted black photo is not all black")
+	}
+
+	h.adjMu.Lock()
+	h.adj = map[string]adjust.Adjustment{photos[0].ID: {Brightness: 1}}
+	h.adjMu.Unlock()
+	h.p.Do(Refresh)
+	h.wait(t, 1)
+	if !allIndex(h.disp.shown[1], 1) {
+		t.Fatal("brightness +100% did not turn the black photo white")
+	}
+}
+
+func TestStatusUsesLatestPhotoDetails(t *testing.T) {
+	photos := makePhotos(t, 1)
+	state := filepath.Join(t.TempDir(), "state.json")
+	h := start(t, photos, state, nil)
+	h.wait(t, 1)
+	h.stop()
+
+	// The photo gained a name since it was shown and saved.
+	photos[0].Name = "IMG_0001.png"
+	h2 := start(t, photos, state, nil)
+	h2.disp.expectNone(t)
+	if st := h2.p.Status(); st.Current == nil || st.Current.Name != "IMG_0001.png" {
+		t.Fatalf("current = %+v, want the library's name", st.Current)
 	}
 }

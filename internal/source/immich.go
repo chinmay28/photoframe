@@ -38,10 +38,11 @@ type immichAlbum struct {
 }
 
 type immichAsset struct {
-	ID            string    `json:"id"`
-	Type          string    `json:"type"`
-	FileCreatedAt time.Time `json:"fileCreatedAt"`
-	ExifInfo      *struct {
+	ID               string    `json:"id"`
+	Type             string    `json:"type"`
+	OriginalFileName string    `json:"originalFileName"`
+	FileCreatedAt    time.Time `json:"fileCreatedAt"`
+	ExifInfo         *struct {
 		DateTimeOriginal *time.Time `json:"dateTimeOriginal"`
 		City             string     `json:"city"`
 		Country          string     `json:"country"`
@@ -53,6 +54,7 @@ type cachedAsset struct {
 	ID      string    `json:"id"`
 	TakenAt time.Time `json:"takenAt"`
 	Title   string    `json:"title,omitempty"`
+	Name    string    `json:"name,omitempty"`
 }
 
 var assetIDPattern = regexp.MustCompile(`^[A-Za-z0-9-]{1,64}$`)
@@ -84,7 +86,7 @@ func (im *Immich) Sync(ctx context.Context) ([]library.Photo, error) {
 				continue
 			}
 		}
-		assets = append(assets, cachedAsset{ID: a.ID, TakenAt: a.takenAt(), Title: a.place()})
+		assets = append(assets, cachedAsset{ID: a.ID, TakenAt: a.takenAt(), Title: a.place(), Name: a.OriginalFileName})
 	}
 	pruneDir(im.CacheDir, keep)
 	if err := im.saveIndex(assets); err != nil {
@@ -152,7 +154,7 @@ func (im *Immich) photos(assets []cachedAsset) []library.Photo {
 		}
 		out = append(out, library.Photo{
 			ID: library.PhotoID(im.SourceID, a.ID), SourceID: im.SourceID,
-			Path: p, TakenAt: a.TakenAt, Title: a.Title,
+			Path: p, TakenAt: a.TakenAt, Title: a.Title, Name: a.Name,
 		})
 	}
 	return out

@@ -15,6 +15,9 @@ type Photo struct {
 	Path     string    `json:"-"` // local file; never exposed over the API
 	TakenAt  time.Time `json:"takenAt"`
 	Title    string    `json:"title,omitempty"`
+	// Name is the photo's file name at its source, for people to recognise
+	// it by, e.g. "IMG_1234.jpg".
+	Name string `json:"name,omitempty"`
 }
 
 // PhotoID derives a stable, URL-safe photo ID from a source ID and a key

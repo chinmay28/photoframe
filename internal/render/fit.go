@@ -3,39 +3,15 @@ package render
 import (
 	"image"
 	"image/color"
-	"image/draw"
 
 	"github.com/chinmay28/photoframe/internal/config"
-	xdraw "golang.org/x/image/draw"
 )
 
 // Fit scales src into a w×h image according to mode. For config.FitFit the
-// uncovered area is filled with bg.
+// uncovered area is filled with bg. It is Frame with View's automatic window.
 func Fit(src *image.RGBA, w, h int, mode config.Fit, bg color.Color) *image.RGBA {
-	dst := image.NewRGBA(image.Rect(0, 0, w, h))
 	sb := src.Bounds()
-	if sb.Empty() {
-		draw.Draw(dst, dst.Bounds(), image.NewUniform(bg), image.Point{}, draw.Src)
-		return dst
-	}
-
-	switch mode {
-	case config.FitFit:
-		draw.Draw(dst, dst.Bounds(), image.NewUniform(bg), image.Point{}, draw.Src)
-		sw, sh := sb.Dx(), sb.Dy()
-		// Scale to the limiting dimension, preserving aspect ratio.
-		tw, th := w, sh*w/sw
-		if th > h {
-			tw, th = sw*h/sh, h
-		}
-		x0, y0 := (w-tw)/2, (h-th)/2
-		xdraw.CatmullRom.Scale(dst, image.Rect(x0, y0, x0+tw, y0+th), src, sb, xdraw.Src, nil)
-	case config.FitSmart:
-		xdraw.CatmullRom.Scale(dst, dst.Bounds(), src, SmartCrop(src, w, h), xdraw.Src, nil)
-	default: // FitFill
-		xdraw.CatmullRom.Scale(dst, dst.Bounds(), src, centerCrop(sb, w, h), xdraw.Src, nil)
-	}
-	return dst
+	return Frame(src, View(src, sb.Dx(), sb.Dy(), w, h, mode, 1, nil), w, h, bg)
 }
 
 // cropSize returns the largest w:h window that fits in b.

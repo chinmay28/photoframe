@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/chinmay28/photoframe/internal/adjust"
 	"github.com/chinmay28/photoframe/internal/config"
 	"github.com/chinmay28/photoframe/internal/library"
 	"github.com/chinmay28/photoframe/internal/playlist"
@@ -94,6 +95,9 @@ type Deps struct {
 	// Ready is closed once the library has finished its first sync. Until
 	// then the player leaves whatever is on the panel alone.
 	Ready <-chan struct{}
+	// Adjustment returns a photo's own adjustment (rotation, framing...).
+	// Optional: without it every photo uses the slideshow settings alone.
+	Adjustment func(photoID string) adjust.Adjustment
 	// StatePath persists the on-screen photo across restarts. Optional.
 	StatePath string
 	// InfoLines returns the text for the welcome and info screens.
@@ -138,6 +142,9 @@ func New(d Deps) *Player {
 	if d.RetryDelay == 0 {
 		d.RetryDelay = time.Minute
 	}
+	if d.Adjustment == nil {
+		d.Adjustment = func(string) adjust.Adjustment { return adjust.Adjustment{} }
+	}
 	if d.InfoLines == nil {
 		d.InfoLines = func() []string { return nil }
 	}
@@ -158,17 +165,26 @@ func (p *Player) Do(c Command) bool {
 	}
 }
 
-// Status returns the current state.
+// Status returns the current state. The current photo's details come from
+// the library when it still has the photo, so they reflect the latest sync
+// rather than what was saved when the photo was shown.
 func (p *Player) Status() Status {
+	photos := p.d.Library.Photos()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	st := Status{
 		Screen: p.screen, Paused: p.paused, Refreshing: p.refreshing,
 		ShownAt: p.shownAt, NextAt: p.nextAt, Error: p.lastErr,
-		Total: len(p.d.Library.Photos()), PanelMissing: p.panelMissing,
+		Total: len(photos), PanelMissing: p.panelMissing,
 	}
 	if p.current != nil {
 		c := *p.current
+		for _, ph := range photos {
+			if ph.ID == c.ID {
+				c = ph
+				break
+			}
+		}
 		st.Current = &c
 	}
 	return st
@@ -441,7 +457,8 @@ func (p *Player) showPhoto(ctx context.Context, s config.Settings, ph library.Ph
 	if s.Caption {
 		o.Caption = Caption(ph)
 	}
-	src, err := render.Load(ph.Path, render.MaxSourceSide(o.Width, o.Height))
+	o.Adjust = p.d.Adjustment(ph.ID)
+	src, err := render.Load(ph.Path, render.MaxSourceSide(o.Width, o.Height, o.Adjust.ZoomOrOne()))
 	if err != nil {
 		return fmt.Errorf("photo %s: %w", ph.ID, err)
 	}
