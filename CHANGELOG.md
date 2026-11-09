@@ -11,8 +11,14 @@ the section as the release notes. To cut a release, add the section in the
 commit that will be that version. With squash merges, that is the merge
 commit: one more than `main`'s current count.
 
-## Unreleased
+## v2026.11.4
 
+- First published release, so `scripts/quickstart.sh` installs a prebuilt
+  bundle in seconds instead of compiling on the Pi.
+- Quickstart's source build now works on a Pi Zero 2 W: it builds on disk
+  rather than the RAM-backed `/tmp`, adds temporary swap when memory is
+  short, keeps Go's caches so an interrupted build resumes on the next run,
+  and prints progress so long compiles don't look hung.
 - One-command install on the Pi: `scripts/quickstart.sh`, with upgrade in
   place, a health check that rolls back a bad upgrade, and `--uninstall`.
 - Calendar versions, `vYEAR.MONTH.PATCH`, stamped from git at build time.
