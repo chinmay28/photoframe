@@ -10,20 +10,20 @@
 #
 #   curl -fsSL …/quickstart.sh | sudo bash -s -- --uninstall
 #
-# By default it installs what is on main right now. CI builds every push to
-# main and publishes it as the "edge" pre-release; that build is used when it
-# is of main's newest commit, otherwise main is built here from source.
-# PHOTOFRAME_RELEASE=latest installs the newest tagged release instead.
+# By default it installs what is on main: it clones the repository and builds
+# main here. Installing a prebuilt release instead is opt-in. PHOTOFRAME_INSTALL
+# picks:
 #
-# It gets a binary one of two ways (PHOTOFRAME_INSTALL picks):
-#
-#   release  download the prebuilt bundle for this Pi from a GitHub release
+#   source   (default) clone the repository and build PHOTOFRAME_REF (main)
+#            here, installing Go if it is missing or too old. Works on any ARM
+#            Pi and any branch, tag or commit. The first build takes a while on
+#            a Pi Zero 2 W; later ones reuse Go's cache and take a minute or so.
+#            If the installed version already matches, nothing is rebuilt.
+#   release  download a prebuilt bundle for this Pi from a GitHub release
 #            (PHOTOFRAME_RELEASE) and check it against the release's
 #            SHA256SUMS. Takes seconds and needs no toolchain.
-#   source   clone the repository and build it here, installing Go if it is
-#            missing or too old. Works on any ARM Pi and can build any
-#            branch, tag or commit, but takes several minutes on a Pi Zero 2 W.
-#   auto     (default) release if a suitable one exists for this Pi, else source.
+#            PHOTOFRAME_RELEASE=edge is CI's build of main's newest commit.
+#   auto     release if a suitable one exists for this Pi, else source.
 #
 # Running this file from a checkout (sudo ./scripts/quickstart.sh) builds that
 # checkout as it stands, committed or not, and never pulls. That is how you
@@ -45,8 +45,8 @@
 #
 # Settings (environment variables, all optional):
 #
-#   PHOTOFRAME_INSTALL   auto | release | source      (default: auto)
-#   PHOTOFRAME_RELEASE   edge | latest | <tag>        edge = build of main (default)
+#   PHOTOFRAME_INSTALL   source | release | auto      (default: source, i.e. main)
+#   PHOTOFRAME_RELEASE   latest | edge | <tag>        release mode only (default: latest)
 #   PHOTOFRAME_BUNDLE    path to a release .tar.gz already on the Pi; installs
 #                        it without going online
 #   PHOTOFRAME_GITHUB    owner/name on GitHub         (default: chinmay28/photoframe)
@@ -94,8 +94,17 @@ esac
 command -v systemctl >/dev/null 2>&1 || die "systemd is required (no systemctl found)"
 say "--- $(date -Is) quickstart ${*:-install}"
 
-INSTALL_MODE="${PHOTOFRAME_INSTALL:-auto}"
-RELEASE="${PHOTOFRAME_RELEASE:-edge}"
+# One run at a time. A deploy tool that gives up on a long build and tries
+# again must not start a second build next to the first (which keeps going:
+# SIGHUP is ignored above), so wait for it instead.
+exec 9>/run/photoframe-quickstart.lock
+if ! flock -n 9; then
+  log "Another quickstart run is still going (progress in $LOG); waiting for it to finish"
+  flock 9
+fi
+
+INSTALL_MODE="${PHOTOFRAME_INSTALL:-source}"
+RELEASE="${PHOTOFRAME_RELEASE:-latest}"
 GITHUB="${PHOTOFRAME_GITHUB:-chinmay28/photoframe}"
 REF="${PHOTOFRAME_REF:-main}"
 INSTALL_GO="${INSTALL_GO:-auto}"
@@ -362,6 +371,15 @@ from_source() {
     # and a shallow clone has none.
     git clone -q --filter=blob:none "https://github.com/$GITHUB.git" "$src"
     git -C "$src" checkout -q "$REF"
+    # A clean clone builds exactly the version version.sh reports, so skip
+    # the build when that is what's running. (A local checkout may have
+    # uncommitted changes, so it is always built.)
+    local want
+    want="$(git_any "$src/scripts/version.sh")"
+    if [ "$want" = "$(installed_version)" ] && [ "${PHOTOFRAME_FORCE:-0}" != 1 ]; then
+      ok "photoframe $want ($REF) is already installed (PHOTOFRAME_FORCE=1 rebuilds it)"
+      exit 0
+    fi
   fi
 
   required="$(sed -n 's/^go \([0-9.]*\).*/\1/p' "$src/go.mod")"

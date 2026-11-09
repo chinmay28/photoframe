@@ -28,17 +28,25 @@ the hostname `photoframe` in the Imager's settings. Then, on the Pi:
 curl -fsSL https://raw.githubusercontent.com/chinmay28/photoframe/main/scripts/quickstart.sh | sudo bash
 ```
 
-It installs what is on `main` right now. CI builds every push to `main` for
-64-bit and 32-bit Raspberry Pi OS and publishes it as the `edge` pre-release.
-Quickstart downloads that build, checks it against its `SHA256SUMS` and
-installs it, which takes seconds. If the build of `main`'s newest commit isn't
-published yet (CI takes a few minutes after a merge), it clones `main` and
-builds it on the Pi instead, installing Go first if needed. Run it again a few
-minutes later to get the prebuilt bundle. Reboot once if it says so, then open
-**http://photoframe.local** on your phone.
+It installs what is on `main`: it clones the repository, builds `main` on the
+Pi (installing Go first if needed) and installs it. Reboot once if it says so,
+then open **http://photoframe.local** on your phone.
 
-To stay on tagged releases instead of following `main`, set
-`PHOTOFRAME_RELEASE=latest`.
+The first build on a Pi Zero 2 W takes a while. Go's caches are kept in
+`/var/cache/photoframe-build`, so later builds take about a minute. If a run
+is cut off, running it again picks up where it stopped, or waits for a build
+that is still going. When the installed version already matches `main`,
+nothing is rebuilt.
+
+Installing a prebuilt bundle instead is opt-in. It takes seconds and nothing
+is compiled on the Pi:
+
+```sh
+# the newest tagged release
+curl -fsSL …/quickstart.sh | sudo PHOTOFRAME_INSTALL=release bash
+# CI's build of main's newest commit
+curl -fsSL …/quickstart.sh | sudo PHOTOFRAME_INSTALL=release PHOTOFRAME_RELEASE=edge bash
+```
 
 Run the same command again to upgrade. Before an upgrade it keeps the running
 binary and a copy of `settings.json` (in `/var/lib/photoframe/backups`). If
@@ -56,15 +64,16 @@ Options are environment variables, set after `sudo`:
 
 | Variable | |
 | --- | --- |
-| `PHOTOFRAME_INSTALL` | `auto` (default), `release`, or `source` to build on the Pi |
-| `PHOTOFRAME_RELEASE` | `edge` (default: the build of `main`), `latest` (newest tagged release) or a tag |
+| `PHOTOFRAME_INSTALL` | `source` (default: build `main` on the Pi), `release` (download a prebuilt bundle) or `auto` (a release if there is one, else source) |
+| `PHOTOFRAME_RELEASE` | with `release`: `latest` (default), `edge` (CI's build of `main`) or a tag |
 | `PHOTOFRAME_REF` | branch, tag or commit to build in source mode (default `main`) |
 | `PHOTOFRAME_BUNDLE` | a release `.tar.gz` already on the Pi, installed without going online |
 | `PHOTOFRAME_HOSTNAME` | set the Pi's hostname, so the app is at `http://<name>.local` |
 | `PHOTOFRAME_FORCE=1` | reinstall even if that version is already running |
 | `PHOTOFRAME_PURGE=1` | with `--uninstall`, also delete `/var/lib/photoframe` and the service user |
 
-For example, `curl -fsSL …/quickstart.sh | sudo PHOTOFRAME_INSTALL=source bash`.
+For example, `curl -fsSL …/quickstart.sh | sudo PHOTOFRAME_REF=my-branch bash`
+builds a branch.
 Running `sudo ./scripts/quickstart.sh` from a checkout on the Pi builds that
 checkout as it stands, which is how to try uncommitted work. Everything it
 prints is also logged to `/var/log/photoframe-quickstart.log`.
@@ -230,11 +239,12 @@ and `SHA256SUMS`. Each tarball holds the binary, `install.sh` and the unit.
 `.github/workflows/release.yml` runs on every push to `main`:
 
 - It always publishes the bundles as the `edge` pre-release, replacing the
-  previous one. The quick start installs that build by default. Being a
+  previous one. The quick start installs it with
+  `PHOTOFRAME_INSTALL=release PHOTOFRAME_RELEASE=edge`. Being a
   pre-release, it never becomes GitHub's "latest release".
 - When the commit has a `## <its version>` section in `CHANGELOG.md`, it also
   publishes a tagged release. A matching tag or a manual dispatch does the
-  same. `PHOTOFRAME_RELEASE=latest` installs those releases.
+  same. `PHOTOFRAME_INSTALL=release` installs the newest of those.
 
 ## Not yet supported
 
