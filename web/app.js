@@ -175,7 +175,7 @@ function NowView(el) {
       </header>
       <section class="card tight">
         <div class="preview${portrait ? ' portrait' : ''}" id="pv">
-          ${p.screen ? `<span class="badge">${p.refreshing ? 'Updating…' : 'E-ink preview'}</span>` : '<div class="empty">Nothing on the frame yet</div>'}
+          ${p.screen ? `<span class="badge">${p.refreshing ? 'Updating…' : p.panelMissing ? 'Preview · no panel' : 'E-ink preview'}</span>` : '<div class="empty">Nothing on the frame yet</div>'}
         </div>
         <div class="row" style="padding:0 4px">
           <div class="grow">
@@ -195,6 +195,7 @@ function NowView(el) {
         <div class="bar"><div style="width:${progress}%"></div></div>
         <p class="hint">${esc(fmtInterval(settings.interval))} · ${esc(orders[settings.order][0])}${q.enabled ? ` · Quiet ${q.from}–${q.until}` : ''}</p>
         ${p.error ? `<p class="hint err">${esc(p.error)}</p>` : ''}
+        ${p.panelMissing ? '<p class="hint">No panel is connected, so the slideshow runs in the app only. Attach the Inky Impression with the Pi powered off; the next photo appears on it after it boots.</p>' : ''}
       </section>
       <section style="display:flex;flex-direction:column;gap:10px">
         <div class="row"><h2 style="margin:0;font-size:15px">Up next</h2><a href="#/sources" style="font-size:13px;text-decoration:none">Manage sources</a></div>

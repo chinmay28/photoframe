@@ -341,3 +341,55 @@ func TestCaption(t *testing.T) {
 type testWriter struct{ t *testing.T }
 
 func (w testWriter) Write(b []byte) (int, error) { w.t.Log(string(b)); return len(b), nil }
+
+type noPanelErr struct{}
+
+func (noPanelErr) Error() string      { return "panel not connected: open /dev/spidev0.0: no such file" }
+func (noPanelErr) Disconnected() bool { return true }
+
+func TestRunsWithoutPanel(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "state.json")
+	h := start(t, makePhotos(t, 3), state, func(s *config.Settings) { s.Interval = config.Duration(80 * time.Millisecond) })
+	h.disp.mu.Lock()
+	h.disp.fail = noPanelErr{}
+	h.disp.mu.Unlock()
+
+	// The schedule keeps advancing and the preview keeps updating.
+	h.wait(t, 3)
+	st := h.p.Status()
+	if !st.PanelMissing || st.Error != "" || st.Current == nil || st.Screen != ScreenPhoto {
+		t.Fatalf("status without panel = %+v", st)
+	}
+	if h.p.Preview() == nil {
+		t.Fatal("no preview without a panel")
+	}
+
+	// Panel attached: the next refresh reaches it and the flag clears.
+	h.disp.mu.Lock()
+	h.disp.fail = nil
+	h.disp.mu.Unlock()
+	h.wait(t, 1)
+	if h.p.Status().PanelMissing {
+		t.Fatal("PanelMissing not cleared after a successful refresh")
+	}
+}
+
+func TestRestartAfterNoPanelDrawsImmediately(t *testing.T) {
+	photos := makePhotos(t, 2)
+	state := filepath.Join(t.TempDir(), "state.json")
+	h := start(t, photos, state, nil)
+	h.disp.mu.Lock()
+	h.disp.fail = noPanelErr{}
+	h.disp.mu.Unlock()
+	h.p.Do(Next)
+	h.wait(t, 2) // the first show may have succeeded; the Next one had no panel
+	h.stop()
+
+	// Rebooted with the panel attached and a 30-minute interval: it must draw
+	// now rather than wait, because nothing of ours is on the panel.
+	h2 := start(t, photos, state, nil)
+	h2.wait(t, 1)
+	if h2.p.Status().PanelMissing {
+		t.Fatal("still marked missing after drawing")
+	}
+}

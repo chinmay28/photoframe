@@ -86,7 +86,7 @@ func OpenLinux(spiPath, gpioChip string) (Hardware, func() error, error) {
 func openSPI(path string) (*os.File, error) {
 	f, err := os.OpenFile(path, os.O_RDWR, 0)
 	if err != nil {
-		return nil, fmt.Errorf("open %s: %w (is SPI enabled?)", path, err)
+		return nil, fmt.Errorf("%w (is SPI enabled?)", err)
 	}
 	mode := uint8(spiNoCS) // SPI mode 0, chip-select handled by us
 	if err := ioctl(f, spiIocWrMode, unsafe.Pointer(&mode)); err != nil {

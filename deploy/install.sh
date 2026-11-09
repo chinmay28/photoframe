@@ -68,12 +68,12 @@ install -m 0644 "$HERE/photoframe.service" /etc/systemd/system/photoframe.servic
 systemctl daemon-reload
 systemctl enable photoframe.service >/dev/null
 
+# Start it either way: the app runs without a panel (or before SPI is up)
+# and starts drawing once the panel is there.
+systemctl restart photoframe.service
+echo
+echo "Photoframe is running. Open http://$(hostname).local on your phone."
+echo "Logs: journalctl -u photoframe -f"
 if (( REBOOT )); then
-  echo
-  echo "SPI was just enabled. Reboot to start the frame:  sudo reboot"
-else
-  systemctl restart photoframe.service
-  echo
-  echo "Photoframe is running. Open http://$(hostname).local on your phone."
-  echo "Logs: journalctl -u photoframe -f"
+  echo "SPI was just enabled and turns on after a reboot: sudo reboot"
 fi

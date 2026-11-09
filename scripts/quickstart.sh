@@ -403,14 +403,6 @@ if ! (cd "$BUNDLE" && ./install.sh --binary ./photoframe ${PHOTOFRAME_HOSTNAME:+
   die "install.sh failed"
 fi
 
-# install.sh only starts the service when SPI was already on; enabling it needs
-# a reboot first, and the service starts on the way back up.
-if [ ! -e /dev/spidev0.0 ] && ! systemctl is-active --quiet photoframe.service; then
-  echo
-  ok "photoframe $NEW_VERSION installed. Reboot to start the frame: sudo reboot"
-  exit 0
-fi
-
 # The port the service listens on, from its unit (-listen :80).
 PORT="$(sed -n 's/.*-listen [^ ]*:\([0-9][0-9]*\).*/\1/p' "$UNIT" | head -n1)"
 PORT="${PORT:-80}"
@@ -433,6 +425,10 @@ if healthy "$NEW_VERSION"; then
   echo
   ok "photoframe $NEW_VERSION is running. Open http://$(hostname).local on your phone."
   echo "    Logs: journalctl -u photoframe -f"
+  if [ ! -e /dev/spidev0.0 ]; then
+    echo "    SPI is not on yet, so the panel can't be used. Reboot once to turn it on: sudo reboot"
+    echo "    (The app works without the panel; attach it with the Pi powered off.)"
+  fi
   exit 0
 fi
 
