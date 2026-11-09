@@ -112,7 +112,7 @@ if [ "$UNINSTALL" = 1 ]; then
   log "Removing photoframe"
   systemctl disable --now photoframe.service 2>/dev/null || :
   rm -f "$UNIT" "$BIN"
-  rm -rf "$STATE_DIR"
+  rm -rf "$STATE_DIR" /var/cache/photoframe-build
   systemctl daemon-reload
   if [ "${PHOTOFRAME_PURGE:-0}" = 1 ]; then
     rm -rf "$DATA_DIR"
@@ -128,8 +128,23 @@ fi
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-WORK="$(mktemp -d /tmp/photoframe-quickstart.XXXXXX)"
-trap 'rm -rf "$WORK"' EXIT
+# /var/tmp, not /tmp: on recent Raspberry Pi OS /tmp is a RAM disk, and a
+# 512 MB Pi Zero has no RAM to spare for a Go build.
+WORK="$(mktemp -d /var/tmp/photoframe-quickstart.XXXXXX)"
+# Go's build and module caches survive between runs, so a build that is cut
+# off (a dropped ssh session, a deploy tool's timeout) resumes where it stopped
+# when the script is run again instead of starting over.
+BUILD_CACHE=/var/cache/photoframe-build
+SWAPFILE="$BUILD_CACHE/swapfile"
+SWAP_ADDED=0
+cleanup() {
+  if [ "$SWAP_ADDED" = 1 ]; then
+    swapoff "$SWAPFILE" 2>/dev/null || :
+    rm -f "$SWAPFILE"
+  fi
+  rm -rf "$WORK"
+}
+trap cleanup EXIT
 
 ensure_pkg() { # ensure_pkg <command> <apt package>
   command -v "$1" >/dev/null 2>&1 && return
@@ -247,6 +262,52 @@ ensure_go() { # ensure_go <required>
   go_ok "$1" || die "installed $latest, but the build needs Go $1"
 }
 
+# ensure_build_memory adds a temporary swap file when RAM plus swap is too
+# small to compile: the Go compiler on a 512 MB Pi Zero 2 W with the default
+# 100 MB of swap thrashes until the board stops answering, ssh included.
+ensure_build_memory() {
+  local need_kb=1572864 have_kb add_mb free_mb
+  have_kb="$(awk '/^(MemTotal|SwapTotal):/ {t += $2} END {print t}' /proc/meminfo)"
+  [ "$have_kb" -ge "$need_kb" ] && return
+  add_mb=$(( (need_kb - have_kb) / 1024 + 64 ))
+  free_mb="$(df -Pm "$BUILD_CACHE" | awk 'NR == 2 {print $4}')"
+  if [ "$free_mb" -lt $((add_mb + 512)) ]; then
+    warn "only ${free_mb} MB free on disk: building without extra swap, which may run out of memory"
+    return
+  fi
+  log "Adding ${add_mb} MB of temporary swap for the build (removed afterwards)"
+  rm -f "$SWAPFILE"
+  if ! { fallocate -l "${add_mb}M" "$SWAPFILE" 2>/dev/null || dd if=/dev/zero of="$SWAPFILE" bs=1M count="$add_mb" status=none; } \
+    || ! chmod 600 "$SWAPFILE" || ! mkswap -q "$SWAPFILE" >/dev/null || ! swapon "$SWAPFILE"; then
+    rm -f "$SWAPFILE"
+    warn "could not add swap; building anyway"
+    return
+  fi
+  SWAP_ADDED=1
+}
+
+# build_with_progress runs a command with its output in the log, printing a
+# line every 20 s. A quiet multi-minute compile looks hung to people and to
+# deploy tools, and writing to a terminal that has gone away (dropped ssh)
+# must not kill the build.
+build_with_progress() {
+  local start pid last
+  start=$(date +%s)
+  say "\$ $*"
+  "$@" >>"$LOG" 2>&1 &
+  pid=$!
+  local tick=0
+  while kill -0 "$pid" 2>/dev/null; do
+    sleep 1
+    tick=$((tick + 1))
+    if [ $((tick % 20)) -eq 0 ] && kill -0 "$pid" 2>/dev/null; then
+      last="$(tail -n1 "$LOG" 2>/dev/null | cut -c1-60)"
+      printf '    still building (%ss)%s\n' "$(( $(date +%s) - start ))" "${last:+: $last}" 2>/dev/null || :
+    fi
+  done
+  wait "$pid"
+}
+
 from_source() {
   local src required goarch goarm
   if src="$(local_checkout)"; then
@@ -282,13 +343,18 @@ from_source() {
     log "Building with Go $(go env GOVERSION | sed 's/^go//')"
   fi
 
+  mkdir -p "$BUILD_CACHE"
+  ensure_build_memory
   BUNDLE="$WORK/bundle"
   mkdir -p "$BUNDLE"
   # Through env: an assignment produced by an expansion is not an assignment.
-  (cd "$src" && env CGO_ENABLED=0 GOOS=linux ${goarch:+GOARCH=$goarch} ${goarm:+GOARM=$goarm} \
-    GOCACHE="$WORK/gocache" GOPATH="$WORK/gopath" \
-    go build "${parallel[@]}" -trimpath -ldflags="$ldflags" -o "$BUNDLE/photoframe" ./cmd/photoframe) \
-    || die "build failed; the installed version, if any, is untouched"
+  # -v prints each package as it compiles, which build_with_progress shows.
+  if ! (cd "$src" && build_with_progress env CGO_ENABLED=0 GOOS=linux ${goarch:+GOARCH=$goarch} ${goarm:+GOARM=$goarm} \
+    GOCACHE="$BUILD_CACHE/gocache" GOMODCACHE="$BUILD_CACHE/gomodcache" GOPATH="$BUILD_CACHE/gopath" \
+    go build -v "${parallel[@]}" -trimpath -ldflags="$ldflags" -o "$BUNDLE/photoframe" ./cmd/photoframe); then
+    tail -n 15 "$LOG" >&2 2>/dev/null || :
+    die "build failed (full output in $LOG); the installed version, if any, is untouched"
+  fi
   install -m 0755 "$src/deploy/install.sh" "$BUNDLE/install.sh"
   install -m 0644 "$src/deploy/photoframe.service" "$BUNDLE/photoframe.service"
   NEW_VERSION="$("$BUNDLE/photoframe" -version | awk '{print $NF}')"
