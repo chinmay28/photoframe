@@ -10,15 +10,20 @@
 #
 #   curl -fsSL …/quickstart.sh | sudo bash -s -- --uninstall
 #
+# By default it installs what is on main right now. CI builds every push to
+# main and publishes it as the "edge" pre-release; that build is used when it
+# is of main's newest commit, otherwise main is built here from source.
+# PHOTOFRAME_RELEASE=latest installs the newest tagged release instead.
+#
 # It gets a binary one of two ways (PHOTOFRAME_INSTALL picks):
 #
-#   release  download the prebuilt bundle for this Pi from the latest GitHub
-#            release and check it against the release's SHA256SUMS. Takes
-#            seconds and needs no toolchain.
+#   release  download the prebuilt bundle for this Pi from a GitHub release
+#            (PHOTOFRAME_RELEASE) and check it against the release's
+#            SHA256SUMS. Takes seconds and needs no toolchain.
 #   source   clone the repository and build it here, installing Go if it is
 #            missing or too old. Works on any ARM Pi and can build any
 #            branch, tag or commit, but takes several minutes on a Pi Zero 2 W.
-#   auto     (default) release if there is one for this Pi, else source.
+#   auto     (default) release if a suitable one exists for this Pi, else source.
 #
 # Running this file from a checkout (sudo ./scripts/quickstart.sh) builds that
 # checkout as it stands, committed or not, and never pulls. That is how you
@@ -41,7 +46,7 @@
 # Settings (environment variables, all optional):
 #
 #   PHOTOFRAME_INSTALL   auto | release | source      (default: auto)
-#   PHOTOFRAME_RELEASE   latest | <tag>               release to install (default: latest)
+#   PHOTOFRAME_RELEASE   edge | latest | <tag>        edge = build of main (default)
 #   PHOTOFRAME_BUNDLE    path to a release .tar.gz already on the Pi; installs
 #                        it without going online
 #   PHOTOFRAME_GITHUB    owner/name on GitHub         (default: chinmay28/photoframe)
@@ -90,7 +95,7 @@ command -v systemctl >/dev/null 2>&1 || die "systemd is required (no systemctl f
 say "--- $(date -Is) quickstart ${*:-install}"
 
 INSTALL_MODE="${PHOTOFRAME_INSTALL:-auto}"
-RELEASE="${PHOTOFRAME_RELEASE:-latest}"
+RELEASE="${PHOTOFRAME_RELEASE:-edge}"
 GITHUB="${PHOTOFRAME_GITHUB:-chinmay28/photoframe}"
 REF="${PHOTOFRAME_REF:-main}"
 INSTALL_GO="${INSTALL_GO:-auto}"
@@ -185,15 +190,22 @@ unpack() { # unpack <tarball>
     || die "the binary in $1 doesn't run on this Pi ($(uname -m))"
 }
 
-latest_tag() {
-  curl -fsSL "https://api.github.com/repos/$GITHUB/releases/latest" 2>/dev/null \
-    | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1
+# github_api <path>: GET https://api.github.com/repos/$GITHUB/<path>, or
+# nothing when it fails (offline, rate limited, not found).
+github_api() {
+  curl -fsSL -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/$GITHUB/$1" 2>/dev/null || :
+}
+
+# json_field <name>: the first string value of "name" in JSON on stdin. The
+# API pretty-prints, one field per line, which is all this needs.
+json_field() {
+  sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -n1
 }
 
 # from_release succeeds with a bundle, or fails (return 1) when there is no
-# release to use, so auto mode can fall back to a source build.
+# suitable release, so auto mode can fall back to a source build.
 from_release() {
-  local arch tag name base
+  local arch tag name base version
   arch="$(release_arch)"
   if [ -z "$arch" ]; then
     warn "no release is built for $(uname -m)"
@@ -201,23 +213,53 @@ from_release() {
   fi
   ensure_pkg curl curl
   tag="$RELEASE"
-  if [ "$tag" = latest ]; then
-    tag="$(latest_tag)"
-    if [ -z "$tag" ]; then
-      warn "no release found for $GITHUB"
-      return 1
-    fi
+  case "$tag" in
+    latest)
+      tag="$(github_api releases/latest | json_field tag_name)"
+      if [ -z "$tag" ]; then
+        warn "no release found for $GITHUB"
+        return 1
+      fi ;;
+    edge)
+      # CI publishes every push to main as the "edge" pre-release. Use it only
+      # when it is main's newest commit, so "install main" means just that.
+      if [ "$REF" != main ]; then
+        log "edge builds only main; building $REF from source"
+        return 1
+      fi
+      local built head
+      built="$(github_api releases/tags/edge | json_field target_commitish)"
+      if [ -z "$built" ]; then
+        warn "no build of main has been published yet"
+        return 1
+      fi
+      head="$(curl -fsSL -H 'Accept: application/vnd.github.sha' "https://api.github.com/repos/$GITHUB/commits/main" 2>/dev/null || :)"
+      if [ -z "$head" ]; then
+        warn "could not ask GitHub for main's newest commit; installing the published build of ${built:0:7}"
+      elif [ "$built" != "$head" ]; then
+        warn "the published build is of ${built:0:7}, but main is at ${head:0:7} (CI may still be building it)"
+        return 1
+      fi ;;
+  esac
+
+  # The bundle's name, and so its version, comes from the release's SHA256SUMS:
+  # edge's file names change with every commit.
+  base="https://github.com/$GITHUB/releases/download/$tag"
+  curl -fsSL -o "$WORK/SHA256SUMS" "$base/SHA256SUMS" || { warn "release $tag has no SHA256SUMS"; return 1; }
+  name="$(awk -v want="-linux-$arch.tar.gz" 'substr($2, length($2) - length(want) + 1) == want {print $2; exit}' "$WORK/SHA256SUMS")"
+  if [ -z "$name" ]; then
+    warn "release $tag has no bundle for linux-$arch"
+    return 1
   fi
-  if [ "$tag" = "$(installed_version)" ] && [ "${PHOTOFRAME_FORCE:-0}" != 1 ]; then
-    ok "photoframe $tag is already installed (PHOTOFRAME_FORCE=1 reinstalls it)"
+  version="${name#photoframe-}"
+  version="${version%-linux-$arch.tar.gz}"
+  if [ "$version" = "$(installed_version)" ] && [ "${PHOTOFRAME_FORCE:-0}" != 1 ]; then
+    ok "photoframe $version is already installed (PHOTOFRAME_FORCE=1 reinstalls it)"
     exit 0
   fi
 
-  name="photoframe-$tag-linux-$arch.tar.gz"
-  base="https://github.com/$GITHUB/releases/download/$tag"
-  log "Downloading $name"
+  log "Downloading $name ($tag)"
   curl -fsSL -o "$WORK/$name" "$base/$name" || { warn "could not download $base/$name"; return 1; }
-  curl -fsSL -o "$WORK/SHA256SUMS" "$base/SHA256SUMS" || die "release $tag has no SHA256SUMS"
   (cd "$WORK" && grep " $name\$" SHA256SUMS | sha256sum -c --status) \
     || die "$name does not match the release's SHA256SUMS"
   ok "checksum matches"

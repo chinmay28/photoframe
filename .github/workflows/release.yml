@@ -7,8 +7,13 @@
 # tag.
 #
 # Three things start it: a tag, a push to main and a manual dispatch. A push to
-# main publishes only when CHANGELOG.md has a section for the version that
-# commit builds; any other push to main is skipped.
+# main publishes a tagged release only when CHANGELOG.md has a section for the
+# version that commit builds.
+#
+# Every push to main (and a dispatch on main) also refreshes the "edge"
+# pre-release: the same bundles built from main's newest commit, which is what
+# scripts/quickstart.sh installs by default. Being a pre-release, it never
+# becomes GitHub's "latest release".
 #
 # scripts/quickstart.sh installs from these releases, so the asset names are a
 # contract: photoframe-<version>-linux-{arm64,armv7}.tar.gz and SHA256SUMS.
@@ -24,6 +29,11 @@ on:
 
 permissions:
   contents: write
+
+# One run at a time, so two quick pushes can't race on the edge release.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   release:
@@ -74,11 +84,9 @@ jobs:
           echo "release=true" >> "$GITHUB_OUTPUT"
 
       - name: Test
-        if: steps.notes.outputs.release == 'true'
         run: go test ./...
 
       - name: Build release bundles
-        if: steps.notes.outputs.release == 'true'
         run: scripts/build-release.sh
 
       - name: Publish release
@@ -97,3 +105,20 @@ jobs:
             --target "${GITHUB_SHA}" \
             --title "${VERSION}" \
             --notes-file notes.md
+
+      # The build of main's newest commit, replaced on every push. Quickstart
+      # compares its target commit with main's head before using it.
+      - name: Publish edge pre-release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          gh release delete edge --cleanup-tag --yes >/dev/null 2>&1 || true
+          gh release create edge \
+            dist/photoframe-${VERSION}-linux-*.tar.gz \
+            dist/SHA256SUMS \
+            --prerelease \
+            --target "${GITHUB_SHA}" \
+            --title "edge: ${VERSION} (main @ ${GITHUB_SHA::7})" \
+            --notes "Automatic build of main at ${GITHUB_SHA}. Replaced on every push to main. Installed by default by scripts/quickstart.sh."
