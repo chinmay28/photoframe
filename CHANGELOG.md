@@ -11,6 +11,15 @@ the section as the release notes. To cut a release, add the section in the
 commit that will be that version. With squash merges, that is the merge
 commit: one more than `main`'s current count.
 
+## Unreleased
+
+- Quickstart builds `main` on the Pi by default. Downloading a prebuilt
+  bundle is opt-in with `PHOTOFRAME_INSTALL=release`. `PHOTOFRAME_RELEASE`
+  then defaults to `latest`, or set it to `edge` for CI's build of `main`.
+- A source build is skipped when the installed version already matches
+  `main`, and a run started while another is still going waits for it
+  instead of building alongside it.
+
 ## v2026.11.6
 
 - The frame runs without a panel attached. The app, schedule and previews
