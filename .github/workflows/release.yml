@@ -1,0 +1,99 @@
+# Build and publish a GitHub release for the commit this runs on.
+#
+# The tag is computed, not typed: scripts/version.sh renders vYEAR.MONTH.PATCH
+# with PATCH as the commit count, so the full history is needed (fetch-depth:
+# 0). A shallow checkout reports patch 0 and the run refuses to release it.
+# The release body is the CHANGELOG.md section whose heading is exactly the
+# tag.
+#
+# Three things start it: a tag, a push to main and a manual dispatch. A push to
+# main publishes only when CHANGELOG.md has a section for the version that
+# commit builds; any other push to main is skipped.
+#
+# scripts/quickstart.sh installs from these releases, so the asset names are a
+# contract: photoframe-<version>-linux-{arm64,armv7}.tar.gz and SHA256SUMS.
+name: release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the patch number is the commit count; shallow = 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Compute version
+        id: version
+        run: |
+          VERSION="$(scripts/version.sh)"
+          if [ "$(scripts/version.sh --patch)" = "0" ]; then
+            echo "patch is 0, an unstamped build: refusing to release" >&2
+            exit 1
+          fi
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "${VERSION}" ]; then
+            echo "tag ${GITHUB_REF_NAME} names a commit that builds ${VERSION}: refusing to publish it" >&2
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      # The changelog heading gates the release. A push to main whose version
+      # has no section is an ordinary commit and is skipped. A tag or manual
+      # dispatch without the section is an error.
+      - name: Release notes from CHANGELOG.md
+        id: notes
+        run: |
+          awk -v tag="${{ steps.version.outputs.version }}" '
+            $0 == "## " tag { found = 1; next }
+            /^## / && found { exit }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            if [ "${GITHUB_REF_TYPE}" = "branch" ] && [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+              echo "no '## ${{ steps.version.outputs.version }}' section in CHANGELOG.md: not a release commit, skipping"
+              echo "release=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "CHANGELOG.md has no '## ${{ steps.version.outputs.version }}' section" >&2
+            exit 1
+          fi
+          echo "release=true" >> "$GITHUB_OUTPUT"
+
+      - name: Test
+        if: steps.notes.outputs.release == 'true'
+        run: go test ./...
+
+      - name: Build release bundles
+        if: steps.notes.outputs.release == 'true'
+        run: scripts/build-release.sh
+
+      - name: Publish release
+        if: steps.notes.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if gh release view "${VERSION}" --json tagName >/dev/null 2>&1; then
+            echo "release ${VERSION} already exists: nothing to publish"
+            exit 0
+          fi
+          gh release create "${VERSION}" \
+            dist/photoframe-${VERSION}-linux-*.tar.gz \
+            dist/SHA256SUMS \
+            --target "${GITHUB_SHA}" \
+            --title "${VERSION}" \
+            --notes-file notes.md
