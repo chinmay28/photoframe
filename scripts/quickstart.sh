@@ -177,6 +177,56 @@ release_arch() {
   esac
 }
 
+# The port the service listens on, from its unit (-listen :80).
+service_port() {
+  local p=""
+  [ -f "$UNIT" ] && p="$(sed -n 's/.*-listen [^ ]*:\([0-9][0-9]*\).*/\1/p' "$UNIT" | head -n1)"
+  echo "${p:-80}"
+}
+
+# answers <version> succeeds when the running app responds with that version
+# within a few seconds. "Installed" is not enough: a binary that crash-loops
+# (for example an old one without SPI) is installed but serves nothing.
+answers() {
+  local want="$1" body
+  command -v curl >/dev/null 2>&1 || return 1
+  for _ in 1 2 3; do
+    body="$(curl -fsS --max-time 3 "http://127.0.0.1:$(service_port)/api/device" 2>/dev/null || :)"
+    case "$body" in *"\"version\":\"$want\""*) return 0 ;; esac
+    sleep 1
+  done
+  return 1
+}
+
+# up_to_date <version> <what>: exit early when <version> is installed and
+# answering; otherwise say why it will be (re)installed and return.
+up_to_date() {
+  [ "$1" = "$(installed_version)" ] || return 0
+  if [ "${PHOTOFRAME_FORCE:-0}" = 1 ]; then
+    log "Reinstalling $1 (PHOTOFRAME_FORCE=1)"
+    return 0
+  fi
+  if answers "$1"; then
+    ok "photoframe $1 ($2) is already installed and running (PHOTOFRAME_FORCE=1 reinstalls it)"
+    print_urls
+    exit 0
+  fi
+  warn "photoframe $1 is installed but the app is not answering on port $(service_port); reinstalling it"
+  journalctl -u photoframe -n 5 --no-pager 2>/dev/null | sed 's/^/    /' >&2 || :
+}
+
+# print_urls shows where to open the app: the .local name, and the IP
+# addresses for phones or networks that don't resolve .local names.
+print_urls() {
+  local port suffix="" ip
+  port="$(service_port)"
+  [ "$port" = 80 ] || suffix=":$port"
+  echo "    Open http://$(hostname).local$suffix on your phone."
+  for ip in $(hostname -I 2>/dev/null); do
+    case "$ip" in *:*) ;; *) echo "    or http://$ip$suffix" ;; esac
+  done
+}
+
 installed_version() { [ -x "$BIN" ] && "$BIN" -version 2>/dev/null | awk '{print $NF}' || :; }
 
 # git in a tree root may not own (a checkout made by the pi user): allow it,
@@ -262,10 +312,7 @@ from_release() {
   fi
   version="${name#photoframe-}"
   version="${version%-linux-$arch.tar.gz}"
-  if [ "$version" = "$(installed_version)" ] && [ "${PHOTOFRAME_FORCE:-0}" != 1 ]; then
-    ok "photoframe $version is already installed (PHOTOFRAME_FORCE=1 reinstalls it)"
-    exit 0
-  fi
+  up_to_date "$version" "$tag"
 
   log "Downloading $name ($tag)"
   curl -fsSL -o "$WORK/$name" "$base/$name" || { warn "could not download $base/$name"; return 1; }
@@ -374,12 +421,7 @@ from_source() {
     # A clean clone builds exactly the version version.sh reports, so skip
     # the build when that is what's running. (A local checkout may have
     # uncommitted changes, so it is always built.)
-    local want
-    want="$(git_any "$src/scripts/version.sh")"
-    if [ "$want" = "$(installed_version)" ] && [ "${PHOTOFRAME_FORCE:-0}" != 1 ]; then
-      ok "photoframe $want ($REF) is already installed (PHOTOFRAME_FORCE=1 rebuilds it)"
-      exit 0
-    fi
+    up_to_date "$(git_any "$src/scripts/version.sh")" "$REF"
   fi
 
   required="$(sed -n 's/^go \([0-9.]*\).*/\1/p' "$src/go.mod")"
@@ -463,15 +505,11 @@ if ! (cd "$BUNDLE" && ./install.sh --binary ./photoframe ${PHOTOFRAME_HOSTNAME:+
   die "install.sh failed"
 fi
 
-# The port the service listens on, from its unit (-listen :80).
-PORT="$(sed -n 's/.*-listen [^ ]*:\([0-9][0-9]*\).*/\1/p' "$UNIT" | head -n1)"
-PORT="${PORT:-80}"
-
 # healthy succeeds once the running service answers /api/device with $1.
 healthy() {
   local want="$1" body
   for _ in $(seq 1 30); do
-    body="$(curl -fsS --max-time 3 "http://127.0.0.1:$PORT/api/device" 2>/dev/null || :)"
+    body="$(curl -fsS --max-time 3 "http://127.0.0.1:$(service_port)/api/device" 2>/dev/null || :)"
     case "$body" in *"\"version\":\"$want\""*) return 0 ;; esac
     sleep 2
   done
@@ -479,11 +517,12 @@ healthy() {
 }
 
 ensure_pkg curl curl
-log "Waiting for the app on port $PORT"
+log "Waiting for the app on port $(service_port)"
 if healthy "$NEW_VERSION"; then
   rm -f "$STATE_DIR/photoframe.prev"
   echo
-  ok "photoframe $NEW_VERSION is running. Open http://$(hostname).local on your phone."
+  ok "photoframe $NEW_VERSION is running."
+  print_urls
   echo "    Logs: journalctl -u photoframe -f"
   if [ ! -e /dev/spidev0.0 ]; then
     echo "    SPI is not on yet, so the panel can't be used. Reboot once to turn it on: sudo reboot"
