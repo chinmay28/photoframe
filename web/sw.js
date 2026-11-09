@@ -1,8 +1,8 @@
 // Service worker: makes the app installable and lets the shell load
 // instantly. The API is never cached; the shell is network-first so updates
 // to the frame's software show up on the next visit.
-const CACHE = 'photoframe-v1';
-const SHELL = ['/', '/app.css', '/app.js', '/manifest.webmanifest', '/icons/icon.svg', '/icons/icon-192.png'];
+const CACHE = 'photoframe-v2';
+const SHELL = ['/', '/app.css', '/app.js', '/manifest.webmanifest', '/icons/icon.svg', '/icons/icon-192.png', '/icons/dev-badge.png', '/icons/dev-badge-full.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

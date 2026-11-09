@@ -596,18 +596,19 @@ function DeviceView(el) {
         ${dev?.wifiIface ? `<dt>Wi-Fi</dt><dd>${esc(dev.wifiIface)}${dev.wifiSignalDbm != null ? ` · ${dev.wifiSignalDbm} dBm, ${signalLabel(dev.wifiSignalDbm)}` : ''}</dd>` : ''}
         ${dev?.cpuTempC != null ? `<dt>CPU temp</dt><dd>${dev.cpuTempC.toFixed(0)} °C</dd>` : ''}
         ${dev?.uptimeSec ? `<dt>Uptime</dt><dd>${uptime(dev.uptimeSec)}</dd>` : ''}
-        <dt>Software</dt><dd>photoframe ${esc(dev?.version || '')} (${esc(dev?.arch || '')})</dd>
       </dl>
       <div class="grid g3">
         <button class="btn small" data-cmd="info">Show info</button>
         <button class="btn small" data-restart>Restart</button>
         <button class="btn danger small" data-cmd="clear">Clear screen</button>
       </div>
-    </section>`, {
+    </section>
+    ${aboutCard(dev)}`, {
     async click(e, c) {
       const b = e.target.closest('button');
       if (!b) return;
-      if (b.dataset.orientation) c.change((s) => { s.display.orientation = b.dataset.orientation; });
+      if (b.hasAttribute('data-devmark')) showDevFlash();
+      else if (b.dataset.orientation) c.change((s) => { s.display.orientation = b.dataset.orientation; });
       else if (b.dataset.panel) c.change((s) => { s.display.panel = b.dataset.panel; });
       else if (b.dataset.dither) c.change((s) => { s.display.dither = b.dataset.dither; });
       else if (b.dataset.cmd) {
@@ -630,6 +631,57 @@ function DeviceView(el) {
       if (e.target.matches('[data-name]') && e.target.value.trim()) c.change((s) => { s.name = e.target.value.trim(); }, false);
     },
   }, () => api.get('/api/device').catch(() => null));
+}
+
+// ---------- about ----------
+
+// The brand lockup over the running version, with the developer badge beside
+// it. The version comes from the frame (/api/device), so it is the version of
+// the software actually running, not of the page that was cached.
+function aboutCard(dev) {
+  const v = dev?.version || '';
+  // Patch 0 is an unstamped development build (see internal/version).
+  const devBuild = /\.0$/.test(v);
+  return `
+    <section class="card about">
+      <div class="row">
+        <div class="brand grow">
+          <img src="/icons/icon.svg" alt="" width="40" height="40">
+          <div><div class="brand-name">Photoframe</div>
+            <div class="brand-version">${esc(v)}${dev?.arch ? ` · ${esc(dev.arch)}` : ''}${devBuild ? ' · development build' : ''}</div></div>
+        </div>
+        <button type="button" class="devmark" data-devmark aria-label="Show the developer badge">
+          <img src="/icons/dev-badge.png" alt="" aria-hidden="true" width="36" height="36">
+        </button>
+      </div>
+    </section>`;
+}
+
+// How long the full-size badge stays up. Matches the CSS animations, which
+// run on their own clock; this removes the overlay.
+const DEV_FLASH_MS = 3000;
+
+// Throws the developer badge up full screen for a moment. A tap anywhere or
+// Escape ends it early.
+function showDevFlash() {
+  if ($('.dev-veil')) return;
+  const veil = document.createElement('div');
+  veil.className = 'dev-veil';
+  veil.innerHTML = `
+    <div class="dev-lockup">
+      <img src="/icons/dev-badge-full.png" alt="Built by CM Hegday — 0x434d">
+      <span>github.com/chinmay28</span>
+    </div>`;
+  const done = () => {
+    clearTimeout(timer);
+    window.removeEventListener('keydown', onKey);
+    veil.remove();
+  };
+  const onKey = (e) => { if (e.key === 'Escape') done(); };
+  const timer = setTimeout(done, DEV_FLASH_MS);
+  veil.addEventListener('click', done);
+  window.addEventListener('keydown', onKey);
+  document.body.append(veil);
 }
 
 // ---------- router ----------

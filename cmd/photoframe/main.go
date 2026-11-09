@@ -27,11 +27,9 @@ import (
 	"github.com/chinmay28/photoframe/internal/source"
 	"github.com/chinmay28/photoframe/internal/sysinfo"
 	"github.com/chinmay28/photoframe/internal/thumbs"
+	"github.com/chinmay28/photoframe/internal/version"
 	"github.com/chinmay28/photoframe/web"
 )
-
-// version is set at build time with -ldflags "-X main.version=...".
-var version = "dev"
 
 type options struct {
 	dataDir      string
@@ -60,7 +58,7 @@ func main() {
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Println(version)
+		fmt.Println("photoframe", version.String())
 		return
 	}
 	if err := run(o); err != nil {
@@ -167,7 +165,7 @@ func run(o options) error {
 			Player:    p,
 			Thumbs:    thumbs.New(filepath.Join(o.dataDir, "thumbs"), 320),
 			UploadDir: factory.UploadDir,
-			Device:    sysinfo.Reader{Version: version}.Read,
+			Device:    sysinfo.Reader{Version: version.String()}.Read,
 			Restart:   stop, // exits cleanly; systemd starts us again
 			Static:    web.FS(),
 			Logger:    logger,
@@ -175,7 +173,7 @@ func run(o options) error {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	go func() {
-		logger.Printf("photoframe %s: app on %s, display %s", version, o.listen, o.display)
+		logger.Printf("photoframe %s: app on %s, display %s", version.String(), o.listen, o.display)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Printf("http: %v", err)
 			stop()

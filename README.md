@@ -19,10 +19,53 @@ offline from its cache.
 - The HAT's A–D buttons: **A** next photo, **B** previous photo, **C**
   pause/resume, **D** shows the app's address on the frame.
 
-## Install on the Pi
+## Quick start on the Pi
 
-1. Flash Raspberry Pi OS Lite with Raspberry Pi Imager. Set Wi-Fi, SSH and the
-   hostname `photoframe` in the Imager's settings.
+Flash Raspberry Pi OS Lite with Raspberry Pi Imager, setting Wi-Fi, SSH and
+the hostname `photoframe` in the Imager's settings. Then, on the Pi:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/chinmay28/photoframe/main/scripts/quickstart.sh | sudo bash
+```
+
+It downloads the latest release for your Pi (64-bit or 32-bit Raspberry Pi
+OS), checks it against the release's `SHA256SUMS` and installs it. If there is
+no release for your Pi, it clones the repository and builds it on the Pi,
+installing Go first if needed. Reboot once if it says so, then open
+**http://photoframe.local** on your phone.
+
+Run the same command again to upgrade. Before an upgrade it keeps the running
+binary and a copy of `settings.json` (in `/var/lib/photoframe/backups`). If
+the new version doesn't answer within a minute, it puts both back and restarts
+the old version. Photos and settings in `/var/lib/photoframe` are never
+touched.
+
+To remove it, keeping photos and settings:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/chinmay28/photoframe/main/scripts/quickstart.sh | sudo bash -s -- --uninstall
+```
+
+Options are environment variables, set after `sudo`:
+
+| Variable | |
+| --- | --- |
+| `PHOTOFRAME_INSTALL` | `auto` (default), `release`, or `source` to build on the Pi |
+| `PHOTOFRAME_RELEASE` | release tag to install (default `latest`) |
+| `PHOTOFRAME_REF` | branch, tag or commit to build in source mode (default `main`) |
+| `PHOTOFRAME_BUNDLE` | a release `.tar.gz` already on the Pi, installed without going online |
+| `PHOTOFRAME_HOSTNAME` | set the Pi's hostname, so the app is at `http://<name>.local` |
+| `PHOTOFRAME_FORCE=1` | reinstall even if that version is already running |
+| `PHOTOFRAME_PURGE=1` | with `--uninstall`, also delete `/var/lib/photoframe` and the service user |
+
+For example, `curl -fsSL …/quickstart.sh | sudo PHOTOFRAME_INSTALL=source bash`.
+Running `sudo ./scripts/quickstart.sh` from a checkout on the Pi builds that
+checkout as it stands, which is how to try uncommitted work. Everything it
+prints is also logged to `/var/log/photoframe-quickstart.log`.
+
+## Install from your computer
+
+1. Flash Raspberry Pi OS Lite as above.
 2. On your computer, with Go 1.24 or later installed:
 
    ```sh
@@ -83,7 +126,13 @@ internal/player      the slideshow loop: timer, commands, retries, state across 
 internal/api         JSON API + embedded PWA; same-origin check on every write
 internal/buttons     A–D buttons with debounce
 internal/sysinfo     temperature, uptime, Wi-Fi signal for the Device screen
+internal/version     vYEAR.MONTH.PATCH; the ingredients are stamped at link time
 web/                 the PWA (plain ES modules, no build step)
+deploy/              install.sh and the systemd unit
+scripts/
+  quickstart.sh      one-command install / upgrade / rollback / uninstall on the Pi
+  version.sh         the only place the version ingredients are computed
+  build-release.sh   the Pi release bundles + SHA256SUMS
 ```
 
 Design choices:
@@ -124,6 +173,8 @@ source's stored API key is only reused when the server URL stays the same.
 ```sh
 make test     # unit tests, with the race detector
 make dev      # run on a laptop; frames go to devdata/display.png
+make version  # the version this tree builds as
+make release  # Pi release bundles in dist/
 ```
 
 Open http://localhost:8080. The PNG display simulates a 2-second refresh
@@ -132,6 +183,43 @@ Open http://localhost:8080. The PNG display simulates a 2-second refresh
 Flags: `-data`, `-listen`, `-display inky|png`, `-png`, `-spi`
 (default `/dev/spidev0.0`), `-gpiochip` (default `gpiochip0`), `-buttons`,
 `-sync-interval`, `-version`.
+
+## Versions and releases
+
+Versions are calendar-based: `vYEAR.MONTH.PATCH`, for example `v2026.11.42`.
+Nobody picks them; they are made of two ingredients from git:
+
+- **Date**: the month of the commit being built, from its committer date. The
+  line moves when a commit lands in a new month, and rebuilding an old commit
+  gives the name it shipped with.
+- **Patch**: the repository's commit count, so every commit is a patch release.
+
+A binary can't ask git, so `scripts/version.sh` computes both and the build
+stamps them in with `-ldflags -X` (`internal/version.Patch` and
+`internal/version.Date`). `make build`, `make pi`, `make release`,
+`scripts/quickstart.sh` and the release workflow all go through it, and a test
+checks that the script and the Go package render the same string.
+
+```sh
+make version                 # v2026.11.42
+scripts/version.sh --patch   # 42
+scripts/version.sh --date    # 2026-11
+```
+
+A bare `go build` stamps nothing and builds patch 0, a development build,
+which the app labels as such. A shallow clone (`--depth 1`) has no real commit
+count, so it also builds patch 0; clone with `--filter=blob:none` instead.
+
+The version shows in `photoframe -version`, the startup log, `/api/device`
+and the About card at the bottom of the app's Device screen, next to the
+developer badge.
+
+`make release` builds `dist/photoframe-<version>-linux-{arm64,armv7}.tar.gz`
+and `SHA256SUMS`. Each tarball holds the binary, `install.sh` and the unit.
+`.github/workflows/release.yml` publishes them as a GitHub release when a
+commit on `main` has a `## <its version>` section in `CHANGELOG.md`, or on a
+matching tag or manual dispatch. Those releases are what the quick start
+installs.
 
 ## Not yet supported
 
