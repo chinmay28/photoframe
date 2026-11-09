@@ -1,0 +1,35 @@
+[Unit]
+Description=Photoframe e-ink slideshow and companion app
+Documentation=https://github.com/chinmay28/photoframe
+# Start without waiting for the network: the frame must keep showing cached
+# photos when Wi-Fi is down. Sources sync when the network comes back.
+After=local-fs.target network.target
+# If a source is a NAS share, add a drop-in with RequiresMountsFor=/mnt/photos
+# (systemctl edit photoframe).
+
+[Service]
+Type=simple
+User=photoframe
+Group=photoframe
+SupplementaryGroups=spi gpio
+ExecStart=/usr/local/bin/photoframe -data /var/lib/photoframe -listen :80
+StateDirectory=photoframe
+StateDirectoryMode=0750
+# Listen on port 80 without running as root.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+Restart=always
+RestartSec=5
+# The panel refresh can take ~40 s; let it finish and power down cleanly.
+TimeoutStopSec=60
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=multi-user.target
