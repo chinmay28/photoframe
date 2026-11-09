@@ -20,6 +20,10 @@ commit: one more than `main`'s current count.
   missing, so installs on a Pi without its screen failed their health check.
 - `install.sh` always starts the service and reminds you to reboot when it
   has just enabled SPI. Before, a first install waited for that reboot.
+- Quickstart installs what is on `main` by default. CI publishes every push
+  to `main` as the `edge` pre-release, and quickstart uses it when it is of
+  `main`'s newest commit. Otherwise it builds `main` on the Pi.
+  `PHOTOFRAME_RELEASE=latest` keeps to tagged releases.
 - Fixed the changelog so this version is actually released: v2026.11.5's
   section had been inserted into the paragraph above by mistake, so no
   release was published for it.

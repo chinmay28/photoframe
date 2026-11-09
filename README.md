@@ -28,11 +28,17 @@ the hostname `photoframe` in the Imager's settings. Then, on the Pi:
 curl -fsSL https://raw.githubusercontent.com/chinmay28/photoframe/main/scripts/quickstart.sh | sudo bash
 ```
 
-It downloads the latest release for your Pi (64-bit or 32-bit Raspberry Pi
-OS), checks it against the release's `SHA256SUMS` and installs it. If there is
-no release for your Pi, it clones the repository and builds it on the Pi,
-installing Go first if needed. Reboot once if it says so, then open
+It installs what is on `main` right now. CI builds every push to `main` for
+64-bit and 32-bit Raspberry Pi OS and publishes it as the `edge` pre-release.
+Quickstart downloads that build, checks it against its `SHA256SUMS` and
+installs it, which takes seconds. If the build of `main`'s newest commit isn't
+published yet (CI takes a few minutes after a merge), it clones `main` and
+builds it on the Pi instead, installing Go first if needed. Run it again a few
+minutes later to get the prebuilt bundle. Reboot once if it says so, then open
 **http://photoframe.local** on your phone.
+
+To stay on tagged releases instead of following `main`, set
+`PHOTOFRAME_RELEASE=latest`.
 
 Run the same command again to upgrade. Before an upgrade it keeps the running
 binary and a copy of `settings.json` (in `/var/lib/photoframe/backups`). If
@@ -51,7 +57,7 @@ Options are environment variables, set after `sudo`:
 | Variable | |
 | --- | --- |
 | `PHOTOFRAME_INSTALL` | `auto` (default), `release`, or `source` to build on the Pi |
-| `PHOTOFRAME_RELEASE` | release tag to install (default `latest`) |
+| `PHOTOFRAME_RELEASE` | `edge` (default: the build of `main`), `latest` (newest tagged release) or a tag |
 | `PHOTOFRAME_REF` | branch, tag or commit to build in source mode (default `main`) |
 | `PHOTOFRAME_BUNDLE` | a release `.tar.gz` already on the Pi, installed without going online |
 | `PHOTOFRAME_HOSTNAME` | set the Pi's hostname, so the app is at `http://<name>.local` |
@@ -221,10 +227,14 @@ developer badge.
 
 `make release` builds `dist/photoframe-<version>-linux-{arm64,armv7}.tar.gz`
 and `SHA256SUMS`. Each tarball holds the binary, `install.sh` and the unit.
-`.github/workflows/release.yml` publishes them as a GitHub release when a
-commit on `main` has a `## <its version>` section in `CHANGELOG.md`, or on a
-matching tag or manual dispatch. Those releases are what the quick start
-installs.
+`.github/workflows/release.yml` runs on every push to `main`:
+
+- It always publishes the bundles as the `edge` pre-release, replacing the
+  previous one. The quick start installs that build by default. Being a
+  pre-release, it never becomes GitHub's "latest release".
+- When the commit has a `## <its version>` section in `CHANGELOG.md`, it also
+  publishes a tagged release. A matching tag or a manual dispatch does the
+  same. `PHOTOFRAME_RELEASE=latest` installs those releases.
 
 ## Not yet supported
 
