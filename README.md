@@ -86,6 +86,11 @@ prints is also logged to `/var/log/photoframe-quickstart.log`.
 
 Until you add photos, the frame shows a welcome screen with the app's address.
 
+You can install before the screen is attached. The app, sources and schedule
+all work, and the Now screen shows the preview marked "no panel". Power the Pi
+off, attach the Inky Impression and boot. The current photo is drawn as soon as
+the service starts.
+
 To install by hand instead, copy `dist/photoframe-linux-arm64` and the two
 files in `deploy/` to the Pi, then run
 `sudo ./install.sh --binary ./photoframe-linux-arm64`.

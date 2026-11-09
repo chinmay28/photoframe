@@ -4,7 +4,17 @@ Versions are `vYEAR.MONTH.PATCH`: the month of the commit and the repository's
 commit count (see `internal/version`). `make version` prints the version the
 current tree builds as.
 
-A section headed with a version, such as `## v2026.11.40`, is what makes that
+A section headed with a version, such as `## v2026.11.5
+
+- The frame runs without a panel attached. The app, schedule and previews
+  all work, and the app says no panel is connected. The service tries the
+  panel again before each refresh and draws on it after the next boot
+  once one is attached. Previously it exited when the SPI device was
+  missing, so installs on a Pi without its screen failed their health check.
+- `install.sh` always starts the service and reminds you to reboot when it
+  has just enabled SPI. Before, a first install waited for that reboot.
+
+## v2026.11.40`, is what makes that
 commit a release: when the commit that builds that version lands on `main`,
 `.github/workflows/release.yml` publishes the Pi bundles under that tag with
 the section as the release notes. To cut a release, add the section in the

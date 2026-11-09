@@ -192,11 +192,16 @@ func run(o options) error {
 func openDisplay(o options, m *inky.Model) (panel, func() error, error) {
 	switch o.display {
 	case "inky":
-		hw, closeHW, err := inky.OpenLinux(o.spiDev, o.gpioChip)
-		if err != nil {
-			return nil, nil, fmt.Errorf("open panel: %w", err)
+		// The panel may not be attached yet, or SPI may need a reboot to come
+		// up. Run without it (the app and previews still work) and try again
+		// before each refresh, at most once a minute.
+		c := inky.NewConnector(func() (inky.Hardware, func() error, error) {
+			return inky.OpenLinux(o.spiDev, o.gpioChip)
+		}, m, time.Minute)
+		if err := c.Connect(); err != nil {
+			log.Printf("%v; starting without it", err)
 		}
-		return inky.New(hw, m), closeHW, nil
+		return c, c.Close, nil
 	case "png":
 		path := o.pngPath
 		if path == "" {
@@ -226,6 +231,6 @@ func infoLines(listen string) []string {
 
 // Compile-time checks that both displays satisfy the interface.
 var (
-	_ panel = (*inky.Device)(nil)
+	_ panel = (*inky.Connector)(nil)
 	_ panel = (*devdisplay.PNG)(nil)
 )

@@ -80,6 +80,9 @@ type Status struct {
 	NextAt     time.Time      `json:"nextAt,omitzero"`
 	Total      int            `json:"total"`
 	Error      string         `json:"error,omitempty"`
+	// PanelMissing is set while no panel is attached: the slideshow keeps
+	// running and the preview shows what the panel would display.
+	PanelMissing bool `json:"panelMissing,omitempty"`
 }
 
 // Deps are the player's collaborators.
@@ -119,7 +122,9 @@ type Player struct {
 	retryAt    time.Time
 	pending    *library.Photo // photo whose display failed, re-sent at retryAt
 	lastErr    string
-	preview    []byte
+	// panelMissing: the display reported that no panel is attached.
+	panelMissing bool
+	preview      []byte
 }
 
 // New returns a player; it does nothing until Run.
@@ -160,7 +165,7 @@ func (p *Player) Status() Status {
 	st := Status{
 		Screen: p.screen, Paused: p.paused, Refreshing: p.refreshing,
 		ShownAt: p.shownAt, NextAt: p.nextAt, Error: p.lastErr,
-		Total: len(p.d.Library.Photos()),
+		Total: len(p.d.Library.Photos()), PanelMissing: p.panelMissing,
 	}
 	if p.current != nil {
 		c := *p.current
@@ -481,18 +486,37 @@ func (p *Player) present(ctx context.Context, img *image.Paletted, o config.Orie
 	p.refreshing = true
 	p.mu.Unlock()
 	err := p.d.Display.Show(ctx, native)
+	missing := isDisconnected(err)
 	p.mu.Lock()
 	p.refreshing = false
-	if err == nil {
+	wasMissing := p.panelMissing
+	if err == nil || missing {
+		// Without a panel the slideshow carries on as if it had drawn, so the
+		// app's preview and schedule work while the frame is being set up.
 		p.preview = buf.Bytes()
 		p.retryAt = time.Time{}
+		p.panelMissing = missing
 		commit()
 	}
 	p.mu.Unlock()
-	if err != nil {
+	switch {
+	case missing && !wasMissing:
+		p.d.Logger.Printf("player: %v; carrying on without a panel and trying again at each refresh", err)
+	case err == nil && wasMissing:
+		p.d.Logger.Printf("player: panel connected")
+	}
+	if err != nil && !missing {
 		return &displayError{err}
 	}
 	return nil
+}
+
+// isDisconnected reports whether err means "no panel attached", as opposed
+// to a refresh that failed. Displays mark such errors with a Disconnected
+// method so this package needs no hardware imports.
+func isDisconnected(err error) bool {
+	var d interface{ Disconnected() bool }
+	return errors.As(err, &d) && d.Disconnected()
 }
 
 func (p *Player) fail(err error) {
@@ -541,6 +565,8 @@ type persisted struct {
 	Screen  Screen         `json:"screen"`
 	ShownAt time.Time      `json:"shownAt"`
 	Paused  bool           `json:"paused"`
+	// PanelMissing: what was "shown" never reached a panel.
+	PanelMissing bool `json:"panelMissing,omitempty"`
 }
 
 func (p *Player) save() {
@@ -548,7 +574,7 @@ func (p *Player) save() {
 		return
 	}
 	p.mu.Lock()
-	st := persisted{Current: p.current, Screen: p.screen, ShownAt: p.shownAt, Paused: p.paused}
+	st := persisted{Current: p.current, Screen: p.screen, ShownAt: p.shownAt, Paused: p.paused, PanelMissing: p.panelMissing}
 	p.mu.Unlock()
 	b, err := json.Marshal(st)
 	if err == nil {
@@ -583,5 +609,10 @@ func (p *Player) restore() {
 	}
 	if p.screen == ScreenInfo {
 		p.screen = ScreenPhoto // info is transient; resume the schedule
+	}
+	if st.PanelMissing {
+		// Last run had no panel, so whatever the panel shows now (if one was
+		// attached since) is not our photo: draw as soon as we start.
+		p.screen = ScreenNone
 	}
 }
