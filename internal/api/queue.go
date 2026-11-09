@@ -38,7 +38,7 @@ func (s *Server) queue(w http.ResponseWriter, r *http.Request) {
 	if up == nil {
 		up = []library.Photo{}
 	}
-	writeJSON(w, http.StatusOK, QueueResponse{Current: st.Current, UpNext: up, Rest: rest})
+	getJSON(w, r, QueueResponse{Current: st.Current, UpNext: up, Rest: rest})
 }
 
 // showPhoto puts a photo on the frame now.

@@ -6,13 +6,33 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 
 // ---------- API ----------
 
-async function request(method, path, body) {
+// The frame is a small board on Wi-Fi: now and then a request is dropped or
+// takes a long while. A request that gets no answer is given up on after
+// TIMEOUT_MS, and reads are tried again before anyone is told. Writes are
+// not repeated, since the frame may have acted on the first one.
+const TIMEOUT_MS = 20000;
+const GET_TRIES = 3;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function requestOnce(method, path, body) {
   const opts = { method, headers: {} };
   if (body !== undefined) {
     opts.headers['Content-Type'] = 'application/json';
     opts.body = JSON.stringify(body);
   }
-  const res = await fetch(path, opts);
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), TIMEOUT_MS);
+  opts.signal = ctl.signal;
+  let res;
+  try {
+    res = await fetch(path, opts);
+  } catch {
+    const err = new Error('The frame didn’t answer. It may be busy, restarting or out of Wi-Fi range.');
+    err.network = true;
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
   if (!res.ok) {
     let msg = res.statusText || `HTTP ${res.status}`;
     try { msg = (await res.json()).error || msg; } catch { /* not JSON */ }
@@ -21,12 +41,109 @@ async function request(method, path, body) {
   if ((res.headers.get('content-type') || '').includes('json')) return res.json();
   return null;
 }
+
+async function request(method, path, body) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await requestOnce(method, path, body);
+    } catch (err) {
+      if (!err.network || method !== 'GET' || attempt >= GET_TRIES) throw err;
+      await sleep(500 * attempt);
+    }
+  }
+}
+
+// Answers the app has already seen, so a screen can be drawn at once and
+// brought up to date when the frame replies. The ones every visit starts
+// with are also kept between visits.
+const KEPT = ['/api/status?upNext=4', '/api/settings', '/api/sources', '/api/queue'];
+const seen = new Map();
+const pending = new Map(); // reads in flight, shared by everyone asking
+function remember(path, value) {
+  seen.set(path, value);
+  if (KEPT.includes(path)) {
+    try { localStorage.setItem('pf:' + path, JSON.stringify(value)); } catch { /* full or blocked: memory will do */ }
+  }
+}
+function recall(path) {
+  if (!seen.has(path) && KEPT.includes(path)) {
+    try {
+      const v = JSON.parse(localStorage.getItem('pf:' + path));
+      if (v) seen.set(path, v);
+    } catch { /* nothing usable kept */ }
+  }
+  return seen.get(path);
+}
+function forget(...paths) {
+  for (const path of paths) {
+    seen.delete(path);
+    try { localStorage.removeItem('pf:' + path); } catch { /* nothing kept */ }
+  }
+}
+function get(path) {
+  if (!pending.has(path)) {
+    pending.set(path, request('GET', path)
+      .then((v) => { remember(path, v); return v; })
+      .finally(() => pending.delete(path)));
+  }
+  return pending.get(path);
+}
 const api = {
-  get: (p) => request('GET', p),
-  put: (p, b) => request('PUT', p, b),
-  post: (p, b) => request('POST', p, b),
-  del: (p) => request('DELETE', p),
+  get,
+  // What the frame last said for path, if anything: possibly out of date.
+  last: recall,
+  put: async (p, b) => {
+    const out = await request('PUT', p, b);
+    changed(p, out);
+    return out;
+  },
+  post: async (p, b) => { const out = await request('POST', p, b); changed(p); return out; },
+  del: async (p) => { const out = await request('DELETE', p); changed(p); return out; },
 };
+// changed drops what a write has made out of date. Settings carry the list
+// of sources, so a change to a source outdates them too.
+function changed(path, out) {
+  if (path === '/api/settings') return remember(path, out);
+  if (path.startsWith('/api/sources')) forget('/api/sources', '/api/settings');
+  if (path.startsWith('/api/photos') || path.startsWith('/api/sources')) forget('/api/queue');
+}
+
+// setHTML replaces node's content only when it differs from what setHTML
+// last put there. Polling redraws the same thing most of the time; leaving
+// the page alone then keeps images from reloading and taps from being lost.
+// It reports whether it changed anything.
+const drawn = new WeakMap();
+function setHTML(node, html) {
+  if (drawn.get(node) === html) return false;
+  drawn.set(node, html);
+  node.innerHTML = html;
+  return true;
+}
+
+// poll runs load now and again every ms, always waiting for one run to end
+// before starting the next, so a slow frame is never sent a pile of requests.
+// It pauses while the app is in the background (or busy() says so) and
+// catches up when the app is looked at again. Returns {now, stop}.
+function poll(load, ms, busy = () => false) {
+  let timer, stopped = false, running = false;
+  async function run() {
+    clearTimeout(timer);
+    if (stopped || running) return;
+    if (!document.hidden && !busy()) {
+      running = true;
+      try { await load(); } finally { running = false; }
+    }
+    if (!stopped) timer = setTimeout(run, ms);
+  }
+  const onShow = () => { if (!document.hidden) run(); };
+  document.addEventListener('visibilitychange', onShow);
+  run();
+  return {
+    now: run,
+    soon(delay) { clearTimeout(timer); timer = setTimeout(run, delay); },
+    stop() { stopped = true; clearTimeout(timer); document.removeEventListener('visibilitychange', onShow); },
+  };
+}
 
 // The API rejects unknown fields, so send only what a source accepts.
 function sourceBody(s) {
@@ -138,20 +255,52 @@ function errorCard(err, retry) {
 // ---------- Now ----------
 
 function NowView(el) {
-  let status, settings, timer, previewKey;
+  const STATUS = '/api/status?upNext=4';
+  let status = api.last(STATUS);
+  let settings = api.last('/api/settings');
+  let offline = null; // the error from the last poll, while it keeps failing
+  let previewKey, previewTries = 0, previewTimer;
+
+  // The preview is one element kept across redraws, shown only once it has
+  // loaded: a photo that is late or failed leaves the placeholder, not a
+  // broken image.
   const img = new Image();
   img.alt = 'What the frame is showing';
+  img.decoding = 'async';
+  img.hidden = true;
+  img.onload = () => { img.hidden = false; previewTries = 0; };
+  img.onerror = () => {
+    // The frame was busy or restarting. Ask again, a little later each time.
+    img.hidden = true;
+    if (previewTries >= 5) return;
+    previewTries++;
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(() => { previewKey = null; if (status) render(); }, 1500 * previewTries);
+  };
 
+  // Each part of the screen is redrawn on its own, and only when it changes.
+  el.innerHTML = ['head', 'stage', 'sched', 'next'].map((k) => `<div class="part" data-part="${k}"></div>`).join('');
+  const part = (k) => $(`[data-part="${k}"]`, el);
+
+  // Settings are asked for once per visit to this screen; status every time.
+  let settingsFresh = false;
   async function load() {
     try {
-      [status, settings] = await Promise.all([api.get('/api/status?upNext=4'), settings || api.get('/api/settings')]);
-      render();
+      [status, settings] = await Promise.all([api.get(STATUS), settingsFresh ? settings : api.get('/api/settings')]);
+      settingsFresh = true;
+      offline = null;
     } catch (err) {
-      el.innerHTML = errorCard(err);
+      offline = err;
     }
+    render();
   }
 
   function render() {
+    if (!status || !settings) {
+      // Nothing to show yet: either still asking, or the frame is unreachable.
+      setHTML(part('head'), offline ? errorCard(offline) : '<p class="hint loading">Connecting to the frame…</p>');
+      return;
+    }
     const p = status.player;
     const cur = p.current;
     const src = cur && settings.sources.find((s) => s.id === cur.sourceId);
@@ -168,14 +317,16 @@ function NowView(el) {
       progress = Math.min(100, Math.max(0, ((Date.now() - new Date(p.shownAt)) / span) * 100));
     }
     const q = settings.quiet;
+    const state = offline ? 'Reconnecting…' : p.error ? 'Problem' : 'Online';
 
-    el.innerHTML = `
+    setHTML(part('head'), `
       <header class="page">
         <div>
-          <div class="sub"><span class="dot${p.error ? ' off' : ''}"></span>${p.error ? 'Problem' : 'Online'} · ${esc(location.host)}</div>
+          <div class="sub"><span class="dot${offline || p.error ? ' off' : ''}"></span>${state} · ${esc(location.host)}</div>
           <h1>${esc(status.name)}</h1>
         </div>
-      </header>
+      </header>`);
+    const stageChanged = setHTML(part('stage'), `
       <section class="card tight">
         <div class="preview${portrait ? ' portrait' : ''}" id="pv">
           ${p.screen ? `<span class="badge">${p.refreshing ? 'Updating…' : p.panelMissing ? 'Preview · no panel' : 'E-ink preview'}</span>` : '<div class="empty">Nothing on the frame yet</div>'}
@@ -196,36 +347,40 @@ function NowView(el) {
           <button class="btn" data-cmd="${p.paused ? 'resume' : 'pause'}" aria-pressed="${p.paused}">${p.paused ? icons.play + 'Resume' : icons.pause + 'Pause'}</button>
           <button class="btn primary" data-cmd="next">Next${icons.next}</button>
         </div>
-      </section>
+      </section>`);
+    setHTML(part('sched'), `
       <section class="card">
         <div class="row"><h2>${esc(title)}</h2><a href="#/slideshow" style="font-size:13px;text-decoration:none">Edit</a></div>
-        <div class="bar"><div style="width:${progress}%"></div></div>
+        <div class="bar"><div style="width:${progress.toFixed(1)}%"></div></div>
         <p class="hint">${esc(fmtInterval(settings.interval))} · ${esc(orders[settings.order][0])}${q.enabled ? ` · Quiet ${q.from}–${q.until}` : ''}</p>
         ${p.error ? `<p class="hint err">${esc(p.error)}</p>` : ''}
+        ${offline ? `<p class="hint err">${esc(offline.message)} Showing what it last reported.</p>` : ''}
         ${p.panelMissing ? '<p class="hint">No panel is connected, so the slideshow runs in the app only. Attach the Inky Impression with the Pi powered off; the next photo appears on it after it boots.</p>' : ''}
-      </section>
+      </section>`);
+    setHTML(part('next'), `
       <section style="display:flex;flex-direction:column;gap:10px">
         <div class="row"><h2 style="margin:0;font-size:15px">Up next</h2>${p.total ? `<a href="#/photos" style="font-size:13px;text-decoration:none">View all ${p.total}</a>` : ''}</div>
         ${status.upNext.length ? `<div class="thumbs">${status.upNext.map((ph) => thumbButton(ph)).join('')}</div>`
           : '<p class="hint">Nothing queued. Add photos in Sources.</p>'}
-      </section>`;
+      </section>`);
 
-    const key = `${p.screen}|${p.shownAt}|${cur ? cur.id : ''}|${p.refreshing}`;
+    const key = `${p.screen}|${p.shownAt}|${cur ? cur.id : ''}`;
     if (p.screen && key !== previewKey && !p.refreshing) {
+      if (previewKey !== null) previewTries = 0; // a new image, not a retry
       previewKey = key;
-      img.src = `/api/preview.png?k=${encodeURIComponent(key)}`;
+      img.src = `/api/preview.png?k=${encodeURIComponent(key)}${previewTries ? `&try=${previewTries}` : ''}`;
     }
-    if (p.screen) $('#pv', el).prepend(img);
+    if (p.screen && (stageChanged || !img.isConnected)) $('#pv', el).prepend(img);
   }
 
   el.onclick = async (e) => {
-    if (e.target.closest('[data-retry]')) return load();
+    if (e.target.closest('[data-retry]')) return poller.now();
     const adj = e.target.closest('[data-adjust]');
-    if (adj) return photoEditor(adj.dataset.adjust, () => setTimeout(load, 600));
+    if (adj) return photoEditor(adj.dataset.adjust, () => poller.soon(600));
     const pick = e.target.closest('[data-photo]');
     if (pick) {
       const ph = status.upNext.find((x) => x.id === pick.dataset.photo);
-      if (ph) photoMenu(ph, { settings, onDone: () => setTimeout(load, 600) });
+      if (ph) photoMenu(ph, { settings, onDone: () => poller.soon(600) });
       return;
     }
     const b = e.target.closest('[data-cmd]');
@@ -234,22 +389,22 @@ function NowView(el) {
     try {
       await api.post('/api/control/' + b.dataset.cmd);
       toast({ next: 'Next photo coming up', prev: 'Going back', pause: 'Paused', resume: 'Resumed' }[b.dataset.cmd]);
-      setTimeout(load, 600);
+      poller.soon(600);
     } catch (err) {
       toast(err.message, true);
-      b.disabled = false;
     }
+    b.disabled = false;
   };
 
-  load();
-  timer = setInterval(() => { if (!document.hidden) load(); }, 5000);
-  return { destroy() { clearInterval(timer); el.onclick = null; } };
+  render(); // from what the frame said last time, if anything
+  const poller = poll(load, 5000);
+  return { destroy() { poller.stop(); clearTimeout(previewTimer); img.onload = img.onerror = null; el.onclick = null; } };
 }
 
 // ---------- Sources ----------
 
 function SourcesView(el) {
-  let sources = [];
+  let sources = api.last('/api/sources');
   let upload = null; // {done, total}
 
   async function load() {
@@ -257,7 +412,8 @@ function SourcesView(el) {
       sources = await api.get('/api/sources');
       render();
     } catch (err) {
-      el.innerHTML = errorCard(err);
+      // Keep showing the list we have; a missed poll is not worth a blank screen.
+      if (!sources) setHTML(el, errorCard(err));
     }
   }
 
@@ -274,7 +430,7 @@ function SourcesView(el) {
     const active = sources.filter((s) => s.enabled);
     const total = active.reduce((n, s) => n + (s.status?.count || 0), 0);
     const uploadSrc = sources.find((s) => s.type === 'upload' && s.enabled) || sources.find((s) => s.type === 'upload');
-    el.innerHTML = `
+    setHTML(el, `
       <header class="page"><div><h1>Photo sources</h1>
         <div class="sub">${plural(total, 'photo')} in rotation from ${active.length} of ${plural(sources.length, 'source')}</div></div></header>
       ${sources.length ? `<ul class="list">${sources.map((s) => `
@@ -296,7 +452,7 @@ function SourcesView(el) {
       </div>
       ${upload ? `<section class="card"><div class="row"><h2>Uploading</h2><span class="hint">${upload.done} of ${upload.total}</span></div>
         <div class="bar"><div style="width:${(upload.pct || 0).toFixed(0)}%"></div></div></section>` : ''}
-      <p class="hint">Photos are resized and dithered on the frame, and remote sources are cached on its SD card, so the slideshow keeps going when a source is offline.</p>`;
+      <p class="hint">Photos are resized and dithered on the frame, and remote sources are cached on its SD card, so the slideshow keeps going when a source is offline.</p>`);
   }
 
   async function toggle(id) {
@@ -311,7 +467,7 @@ function SourcesView(el) {
     try {
       await api.post(`/api/sources/${encodeURIComponent(id)}/sync`);
       toast('Syncing…');
-      setTimeout(load, 1500);
+      poller.soon(1500);
     } catch (err) { toast(err.message, true); }
   }
 
@@ -362,7 +518,7 @@ function SourcesView(el) {
   el.onclick = (e) => {
     const t = e.target.closest('button');
     if (!t) return;
-    if (t.matches('[data-retry]')) load();
+    if (t.matches('[data-retry]')) poller.now();
     else if (t.dataset.toggle) toggle(t.dataset.toggle);
     else if (t.dataset.sync) sync(t.dataset.sync);
     else if (t.dataset.edit) sourceDialog(sources.find((s) => s.id === t.dataset.edit), load);
@@ -372,9 +528,9 @@ function SourcesView(el) {
     if (e.target.dataset.upload) uploadFiles(e.target.dataset.upload, e.target.files);
   };
 
-  load();
-  const timer = setInterval(() => { if (!document.hidden && !upload) load(); }, 10000);
-  return { destroy() { clearInterval(timer); el.onclick = el.onchange = null; } };
+  if (sources) render(); // from last time, until the frame answers
+  const poller = poll(load, 10000, () => !!upload);
+  return { destroy() { poller.stop(); el.onclick = el.onchange = null; } };
 }
 
 function sourceDialog(existing, onDone) {
@@ -462,7 +618,7 @@ function sourceDialog(existing, onDone) {
 function thumbButton(ph, badge = '') {
   const label = ph.name || ph.title || monthYear(ph.takenAt) || 'photo';
   return `<button type="button" class="thumb" data-photo="${esc(ph.id)}" title="${esc(ph.name || '')}" aria-label="Options for ${esc(label)}">
-    <img loading="lazy" src="/api/photos/${encodeURIComponent(ph.id)}/thumb" alt="">${badge ? `<span class="thumb-badge">${esc(badge)}</span>` : ''}</button>`;
+    <img loading="lazy" decoding="async" src="/api/photos/${encodeURIComponent(ph.id)}/thumb" alt="">${badge ? `<span class="thumb-badge">${esc(badge)}</span>` : ''}</button>`;
 }
 
 // photoMenu offers what can be done with one photo. Opening a menu first,
@@ -524,20 +680,21 @@ function photoMenu(ph, { settings, current = false, onDone }) {
 
 // PhotosView shows every photo in the slideshow in the order it will play.
 function PhotosView(el) {
-  let q, settings;
+  let q = api.last('/api/queue');
+  let settings = api.last('/api/settings');
 
   async function load() {
     try {
       [q, settings] = await Promise.all([api.get('/api/queue'), api.get('/api/settings')]);
       render();
     } catch (err) {
-      el.innerHTML = errorCard(err);
+      if (!q || !settings) setHTML(el, errorCard(err));
     }
   }
 
   function render() {
     const total = q.upNext.length + q.rest.length + (q.current ? 1 : 0);
-    el.innerHTML = `
+    setHTML(el, `
       <header class="page"><div>
         <div class="sub"><a href="#/now" style="text-decoration:none">${icons.prev.replace('<svg', '<svg class="inline-icon"')}Now</a></div>
         <h1>All photos</h1>
@@ -550,21 +707,21 @@ function PhotosView(el) {
           : '<p class="hint">Nothing queued.</p>'}</section>
       ${q.rest.length ? `<section class="photo-section"><h2>Shown this round</h2>
         <p class="hint">These come back once everything above has been shown.</p>
-        <div class="thumbs">${q.rest.map((ph) => thumbButton(ph)).join('')}</div></section>` : ''}`;
+        <div class="thumbs">${q.rest.map((ph) => thumbButton(ph)).join('')}</div></section>` : ''}`);
   }
 
   el.onclick = (e) => {
-    if (e.target.closest('[data-retry]')) return load();
+    if (e.target.closest('[data-retry]')) return poller.now();
     const pick = e.target.closest('[data-photo]');
     if (!pick) return;
     const id = pick.dataset.photo;
     const ph = [q.current, ...q.upNext, ...q.rest].find((x) => x && x.id === id);
-    if (ph) photoMenu(ph, { settings, current: q.current?.id === id, onDone: () => setTimeout(load, 400) });
+    if (ph) photoMenu(ph, { settings, current: q.current?.id === id, onDone: () => poller.soon(400) });
   };
 
-  load();
-  const timer = setInterval(() => { if (!document.hidden && !$('#dialog').open) load(); }, 10000);
-  return { destroy() { clearInterval(timer); el.onclick = null; } };
+  if (q && settings) render(); // from last time, until the frame answers
+  const poller = poll(load, 10000, () => $('#dialog').open);
+  return { destroy() { poller.stop(); el.onclick = null; } };
 }
 
 // ---------- photo editor ----------
@@ -617,7 +774,8 @@ async function photoEditor(id, onDone) {
   const path = `/api/photos/${encodeURIComponent(id)}`;
   let view, settings;
   try {
-    [view, settings] = await Promise.all([api.get(path + '/adjustment'), api.get('/api/settings')]);
+    // Settings rarely change and every screen has them already.
+    [view, settings] = await Promise.all([api.get(path + '/adjustment'), api.last('/api/settings') || api.get('/api/settings')]);
   } catch (err) { toast(err.message, true); return; }
 
   const ph = view.photo;
@@ -630,10 +788,22 @@ async function photoEditor(id, onDone) {
   let rotated = null;
   let frame = 0;
 
-  const img = new Image();
-  img.onload = () => { rotated = rotateImage(img, a.rotate); draw(); };
-  img.onerror = () => { const s = $('[data-status]', dlg); if (s) s.textContent = 'Could not load the photo.'; };
-  img.src = path + '/image';
+  // The thumbnail is almost always in the browser already, so the editor is
+  // usable at once; the sharper image replaces it when the frame has made
+  // it, which takes a few seconds the first time a photo is edited.
+  let img = null; // the best picture loaded so far
+  let sharp = false;
+  let note = 'Loading a sharper preview…'; // shown in place of the file name
+  const status = (text) => { note = text; const s = $('[data-status]', dlg); if (s) s.textContent = note || ph.name || ''; };
+  const use = (loaded) => { img = loaded; rotated = rotateImage(img, a.rotate); draw(); };
+  const thumb = new Image();
+  thumb.onload = () => { if (!sharp) use(thumb); };
+  thumb.onerror = () => { if (!sharp && full.complete && !full.naturalWidth) status('Could not load the photo.'); };
+  thumb.src = path + '/thumb';
+  const full = new Image();
+  full.onload = () => { sharp = true; use(full); status(''); };
+  full.onerror = () => status(img ? `${ph.name || 'Photo'} · low-detail preview` : thumb.complete ? 'Could not load the photo.' : note);
+  full.src = path + '/image';
 
   function alignGrid() {
     const cells = [];
@@ -661,7 +831,7 @@ async function photoEditor(id, onDone) {
         <div class="editor-stage${portrait ? ' portrait' : ''}" style="background:${border}">
           <canvas data-canvas aria-label="Preview of the framed photo; drag to move it"></canvas>
         </div>
-        <div class="filename" title="${esc(ph.name || '')}" data-status>${esc(ph.name || '')}</div>
+        <div class="filename" title="${esc(ph.name || '')}" data-status>${esc(note || ph.name || '')}</div>
         <p class="hint" data-hint>${esc(hint())}</p>
         <div class="row">
           <span class="field">Rotate</span>
@@ -770,7 +940,7 @@ async function photoEditor(id, onDone) {
     if (b.matches('[data-cancel]')) close();
     else if (b.dataset.rotate) {
       a.rotate = (a.rotate + Number(b.dataset.rotate)) % 360;
-      if (img.complete && img.naturalWidth) rotated = rotateImage(img, a.rotate);
+      if (img) rotated = rotateImage(img, a.rotate);
       render();
     } else if (b.dataset.fit !== undefined) {
       a.fit = b.dataset.fit;
@@ -781,7 +951,7 @@ async function photoEditor(id, onDone) {
       render();
     } else if (b.matches('[data-reset]')) {
       Object.assign(a, { rotate: 0, fit: '', zoom: 1, position: null, brightness: 0 });
-      if (img.complete && img.naturalWidth) rotated = rotateImage(img, 0);
+      if (img) rotated = rotateImage(img, 0);
       render();
     }
   };
@@ -819,7 +989,9 @@ async function photoEditor(id, onDone) {
 
 // settingsView loads settings, renders with build(settings), and saves edits.
 function settingsView(el, build, bind, extraLoad) {
-  let settings, extra;
+  let settings = api.last('/api/settings');
+  let extra;
+  let edited = false; // the person changed something since the screen opened
   const save = debounce(async () => {
     try {
       settings = await api.put('/api/settings', settingsBody(settings));
@@ -827,20 +999,26 @@ function settingsView(el, build, bind, extraLoad) {
       if (s) s.textContent = 'Saved · applied to the frame';
     } catch (err) {
       toast(err.message, true);
+      edited = false;
       await load();
     }
   }, 350);
   const ctx = {
     get s() { return settings; },
     get extra() { return extra; },
-    change(fn, rerender = true) { fn(settings); if (rerender) render(); save(); },
+    change(fn, rerender = true) { edited = true; fn(settings); if (rerender) render(); save(); },
   };
-  function render() { el.innerHTML = build(settings, extra); }
+  function render() { setHTML(el, build(settings, extra)); }
   async function load() {
+    // Draw from the settings already in hand, then catch up with the frame
+    // unless an edit got in first: the edit must not be overwritten.
+    if (settings) { settings = structuredClone(settings); render(); }
     try {
-      [settings, extra] = await Promise.all([api.get('/api/settings'), extraLoad ? extraLoad() : null]);
+      const [fresh, more] = await Promise.all([api.get('/api/settings'), extraLoad ? extraLoad() : null]);
+      extra = more;
+      if (!edited) settings = structuredClone(fresh);
       render();
-    } catch (err) { el.innerHTML = errorCard(err); }
+    } catch (err) { if (!settings) setHTML(el, errorCard(err)); }
   }
   el.onclick = (e) => {
     if (e.target.closest('[data-retry]')) return load();
@@ -1067,14 +1245,19 @@ function route() {
   const name = location.hash.replace(/^#\//, '') || 'now';
   const view = views[name] ? name : 'now';
   active?.destroy?.();
-  const el = $('#view');
-  el.innerHTML = '';
+  // Each screen draws into an element of its own. A screen that hears back
+  // from the frame after it was left then draws into nothing, instead of
+  // over the screen that replaced it.
+  const main = $('#view');
+  const el = document.createElement('div');
+  el.className = 'part';
+  main.replaceChildren(el);
   document.querySelectorAll('.tabs a').forEach((a) => {
     if (a.dataset.tab === (tabFor[view] || view)) a.setAttribute('aria-current', 'page');
     else a.removeAttribute('aria-current');
   });
   active = views[view](el);
-  el.focus({ preventScroll: true });
+  main.focus({ preventScroll: true });
 }
 
 window.addEventListener('hashchange', route);
@@ -1082,4 +1265,12 @@ route();
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(() => { /* app still works without it */ });
+  // The app opens from the phone's copy, so new frame software is noticed a
+  // moment after opening. Switch to it then, unless something is being edited.
+  navigator.serviceWorker.addEventListener('message', (e) => {
+    if (e.data?.type === 'app-updated' && !$('#dialog').open && !sessionStorage.getItem('pf:reloaded')) {
+      sessionStorage.setItem('pf:reloaded', '1'); // at most once per visit, whatever happens
+      location.reload();
+    }
+  });
 }

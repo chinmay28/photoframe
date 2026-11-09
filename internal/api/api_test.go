@@ -88,8 +88,10 @@ func (p *fakePlayer) UpNext(n int) []library.Photo { return p.upNext }
 
 type fakeThumbs struct{ removed []string }
 
-func (f *fakeThumbs) Thumb(library.Photo) ([]byte, error) { return []byte("jpg"), nil }
-func (f *fakeThumbs) Remove(id string)                    { f.removed = append(f.removed, id) }
+func (f *fakeThumbs) Thumb(ctx context.Context, _ library.Photo) ([]byte, error) {
+	return []byte("jpg"), ctx.Err()
+}
+func (f *fakeThumbs) Remove(id string) { f.removed = append(f.removed, id) }
 
 type env struct {
 	srv    *httptest.Server

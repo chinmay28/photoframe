@@ -13,6 +13,10 @@ User=photoframe
 Group=photoframe
 SupplementaryGroups=spi gpio
 ExecStart=/usr/local/bin/photoframe -data /var/lib/photoframe -listen :80
+# A Pi Zero 2 W has 512 MB. Decoding a large phone photo takes tens of
+# megabytes at a time; this makes Go collect garbage harder well before the
+# kernel would have to kill the service. It is a target, not a hard cap.
+Environment=GOMEMLIMIT=256MiB
 StateDirectory=photoframe
 StateDirectoryMode=0750
 # Listen on port 80 without running as root.

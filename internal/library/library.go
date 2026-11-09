@@ -38,6 +38,7 @@ type Library struct {
 	mu      sync.RWMutex
 	entries map[string]*entry
 	changed chan struct{}
+	subs    []chan struct{}
 	kick    chan struct{}
 }
 
@@ -210,9 +211,26 @@ func (l *Library) Run(ctx context.Context, every time.Duration) {
 	}
 }
 
+// Subscribe returns a further channel that, like Changed, receives a value
+// whenever the photo set may have changed. Each subscriber has its own
+// channel; notifications are coalesced, so a slow reader sees at most one
+// pending value.
+func (l *Library) Subscribe() <-chan struct{} {
+	c := make(chan struct{}, 1)
+	l.mu.Lock()
+	l.subs = append(l.subs, c)
+	l.mu.Unlock()
+	return c
+}
+
 func (l *Library) notify() {
-	select {
-	case l.changed <- struct{}{}:
-	default:
+	l.mu.RLock()
+	chans := append([]chan struct{}{l.changed}, l.subs...)
+	l.mu.RUnlock()
+	for _, c := range chans {
+		select {
+		case c <- struct{}{}:
+		default:
+		}
 	}
 }

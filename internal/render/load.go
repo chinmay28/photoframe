@@ -54,23 +54,40 @@ func exifOrientation(b []byte) int {
 }
 
 // downscale converts src to RGBA, shrinking it to fit within maxSide.
+//
+// Photos are usually many times larger than needed, and a quality scaler's
+// cost grows with the source, not the result: on a Pi Zero it took several
+// seconds per photo. So JPEGs are first box-averaged by a whole factor
+// (shrinkYCbCr), which is both fast and a proper anti-aliasing filter, and
+// only the remaining step of less than 2× goes through interpolation.
 func downscale(src image.Image, maxSide int) *image.RGBA {
 	b := src.Bounds()
 	w, h := b.Dx(), b.Dy()
-	if maxSide > 0 && (w > maxSide || h > maxSide) {
-		if w >= h {
-			h = max(1, h*maxSide/w)
-			w = maxSide
-		} else {
-			w = max(1, w*maxSide/h)
-			h = maxSide
-		}
+	if maxSide <= 0 || (w <= maxSide && h <= maxSide) {
 		dst := image.NewRGBA(image.Rect(0, 0, w, h))
-		xdraw.BiLinear.Scale(dst, dst.Bounds(), src, b, xdraw.Src, nil)
+		draw.Draw(dst, dst.Bounds(), src, b.Min, draw.Src)
 		return dst
 	}
+	// The result's size comes from the original, so the whole-factor step
+	// dropping a few edge pixels does not change the photo's shape.
+	if w >= h {
+		w, h = maxSide, max(1, h*maxSide/w)
+	} else {
+		w, h = max(1, w*maxSide/h), maxSide
+	}
+	if y, ok := src.(*image.YCbCr); ok {
+		if small, ok := shrinkYCbCr(y, shrinkFactor(b.Dx(), b.Dy(), maxSide)); ok {
+			src, b = small, small.Bounds()
+		}
+	}
+	scaler := xdraw.Scaler(xdraw.BiLinear)
+	if max(b.Dx(), b.Dy()) < 2*maxSide {
+		// Under 2× plain interpolation does not alias, and it costs time in
+		// proportion to the result instead of the source.
+		scaler = xdraw.ApproxBiLinear
+	}
 	dst := image.NewRGBA(image.Rect(0, 0, w, h))
-	draw.Draw(dst, dst.Bounds(), src, b.Min, draw.Src)
+	scaler.Scale(dst, dst.Bounds(), src, b, xdraw.Src, nil)
 	return dst
 }
 
