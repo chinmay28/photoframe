@@ -205,10 +205,8 @@ function NowView(el) {
         ${p.panelMissing ? '<p class="hint">No panel is connected, so the slideshow runs in the app only. Attach the Inky Impression with the Pi powered off; the next photo appears on it after it boots.</p>' : ''}
       </section>
       <section style="display:flex;flex-direction:column;gap:10px">
-        <div class="row"><h2 style="margin:0;font-size:15px">Up next</h2><a href="#/sources" style="font-size:13px;text-decoration:none">Manage sources</a></div>
-        ${status.upNext.length ? `<div class="thumbs">${status.upNext.map((ph) =>
-          `<button type="button" data-adjust="${esc(ph.id)}" title="${esc(ph.name || '')}" aria-label="Adjust ${esc(ph.name || ph.title || 'queued photo')}">
-            <img loading="lazy" src="/api/photos/${encodeURIComponent(ph.id)}/thumb" alt=""></button>`).join('')}</div>`
+        <div class="row"><h2 style="margin:0;font-size:15px">Up next</h2>${p.total ? `<a href="#/photos" style="font-size:13px;text-decoration:none">View all ${p.total}</a>` : ''}</div>
+        ${status.upNext.length ? `<div class="thumbs">${status.upNext.map((ph) => thumbButton(ph)).join('')}</div>`
           : '<p class="hint">Nothing queued. Add photos in Sources.</p>'}
       </section>`;
 
@@ -224,6 +222,12 @@ function NowView(el) {
     if (e.target.closest('[data-retry]')) return load();
     const adj = e.target.closest('[data-adjust]');
     if (adj) return photoEditor(adj.dataset.adjust, () => setTimeout(load, 600));
+    const pick = e.target.closest('[data-photo]');
+    if (pick) {
+      const ph = status.upNext.find((x) => x.id === pick.dataset.photo);
+      if (ph) photoMenu(ph, { settings, onDone: () => setTimeout(load, 600) });
+      return;
+    }
     const b = e.target.closest('[data-cmd]');
     if (!b) return;
     b.disabled = true;
@@ -451,6 +455,116 @@ function sourceDialog(existing, onDone) {
     }
   };
   dlg.showModal();
+}
+
+// ---------- photo menu & all photos ----------
+
+function thumbButton(ph, badge = '') {
+  const label = ph.name || ph.title || monthYear(ph.takenAt) || 'photo';
+  return `<button type="button" class="thumb" data-photo="${esc(ph.id)}" title="${esc(ph.name || '')}" aria-label="Options for ${esc(label)}">
+    <img loading="lazy" src="/api/photos/${encodeURIComponent(ph.id)}/thumb" alt="">${badge ? `<span class="thumb-badge">${esc(badge)}</span>` : ''}</button>`;
+}
+
+// photoMenu offers what can be done with one photo. Opening a menu first,
+// rather than acting on a tap, keeps a stray tap from changing the frame.
+function photoMenu(ph, { settings, current = false, onDone }) {
+  const dlg = $('#dialog');
+  const src = settings?.sources.find((s) => s.id === ph.sourceId);
+  const deletable = src?.type === 'upload';
+  const path = `/api/photos/${encodeURIComponent(ph.id)}`;
+  const sub = [ph.title, monthYear(ph.takenAt), src?.name].filter(Boolean).join(' · ');
+  dlg.innerHTML = `
+    <form method="dialog" class="photo-menu">
+      <div class="row" style="align-items:flex-start">
+        <img class="menu-thumb" src="${path}/thumb" alt="">
+        <div class="grow">
+          <div class="filename" title="${esc(ph.name || '')}">${esc(ph.name || 'Untitled')}</div>
+          <div class="hint">${esc(sub)}</div>
+          ${current ? '<div class="hint" style="color:var(--accent)">On the frame now</div>' : ''}
+        </div>
+      </div>
+      <div class="menu-list">
+        ${current ? '' : `
+        <button type="button" class="btn primary" data-act="show">${icons.play}Show on the frame now</button>
+        <div class="grid g2">
+          <button type="button" class="btn" data-act="front">${icons.next}Play next</button>
+          <button type="button" class="btn" data-act="back">${icons.prev}Move to back</button>
+        </div>`}
+        <button type="button" class="btn" data-act="adjust">${icons.adjust}Adjust…</button>
+        ${deletable
+          ? `<button type="button" class="btn danger" data-act="delete">${icons.trash}Delete from the frame</button>`
+          : `<p class="hint">Only photos uploaded to the frame can be deleted here. To remove this one, take it out of ${esc(src?.name || 'its source')}.</p>`}
+      </div>
+      <div class="actions"><button type="button" class="btn small" data-cancel>Close</button></div>
+    </form>`;
+  dlg.onsubmit = (e) => e.preventDefault();
+  dlg.oninput = dlg.onchange = dlg.onclose = null;
+  dlg.onclick = async (e) => {
+    if (e.target.closest('[data-cancel]')) return dlg.close();
+    const b = e.target.closest('[data-act]');
+    if (!b) return;
+    const act = b.dataset.act;
+    if (act === 'adjust') { dlg.close(); photoEditor(ph.id, onDone); return; }
+    if (act === 'delete' && !confirm(`Delete “${ph.name || 'this photo'}” from the frame? This can’t be undone.`)) return;
+    b.disabled = true;
+    try {
+      if (act === 'show') await api.post(path + '/show');
+      else if (act === 'front' || act === 'back') await api.post(path + '/queue', { position: act });
+      else if (act === 'delete') await api.del(path);
+      dlg.close();
+      toast({ show: 'Showing it now — the frame will flash', front: 'It’s up next', back: 'Moved to the back of the queue', delete: 'Deleted' }[act]);
+      onDone?.();
+    } catch (err) {
+      toast(err.message, true);
+      b.disabled = false;
+    }
+  };
+  dlg.showModal();
+}
+
+// PhotosView shows every photo in the slideshow in the order it will play.
+function PhotosView(el) {
+  let q, settings;
+
+  async function load() {
+    try {
+      [q, settings] = await Promise.all([api.get('/api/queue'), api.get('/api/settings')]);
+      render();
+    } catch (err) {
+      el.innerHTML = errorCard(err);
+    }
+  }
+
+  function render() {
+    const total = q.upNext.length + q.rest.length + (q.current ? 1 : 0);
+    el.innerHTML = `
+      <header class="page"><div>
+        <div class="sub"><a href="#/now" style="text-decoration:none">${icons.prev.replace('<svg', '<svg class="inline-icon"')}Now</a></div>
+        <h1>All photos</h1>
+        <div class="sub">${plural(total, 'photo')} · ${esc(orders[settings.order][0])} · tap one for options</div>
+      </div></header>
+      ${q.current ? `<section class="photo-section"><h2>On the frame</h2>
+        <div class="thumbs">${thumbButton(q.current)}</div></section>` : ''}
+      <section class="photo-section"><h2>Up next</h2>
+        ${q.upNext.length ? `<div class="thumbs">${q.upNext.map((ph, i) => thumbButton(ph, String(i + 1))).join('')}</div>`
+          : '<p class="hint">Nothing queued.</p>'}</section>
+      ${q.rest.length ? `<section class="photo-section"><h2>Shown this round</h2>
+        <p class="hint">These come back once everything above has been shown.</p>
+        <div class="thumbs">${q.rest.map((ph) => thumbButton(ph)).join('')}</div></section>` : ''}`;
+  }
+
+  el.onclick = (e) => {
+    if (e.target.closest('[data-retry]')) return load();
+    const pick = e.target.closest('[data-photo]');
+    if (!pick) return;
+    const id = pick.dataset.photo;
+    const ph = [q.current, ...q.upNext, ...q.rest].find((x) => x && x.id === id);
+    if (ph) photoMenu(ph, { settings, current: q.current?.id === id, onDone: () => setTimeout(load, 400) });
+  };
+
+  load();
+  const timer = setInterval(() => { if (!document.hidden && !$('#dialog').open) load(); }, 10000);
+  return { destroy() { clearInterval(timer); el.onclick = null; } };
 }
 
 // ---------- photo editor ----------
@@ -945,7 +1059,8 @@ function showDevFlash() {
 
 // ---------- router ----------
 
-const views = { now: NowView, sources: SourcesView, slideshow: SlideshowView, device: DeviceView };
+const views = { now: NowView, photos: PhotosView, sources: SourcesView, slideshow: SlideshowView, device: DeviceView };
+const tabFor = { photos: 'now' }; // pages without a tab of their own
 let active;
 
 function route() {
@@ -955,7 +1070,7 @@ function route() {
   const el = $('#view');
   el.innerHTML = '';
   document.querySelectorAll('.tabs a').forEach((a) => {
-    if (a.dataset.tab === view) a.setAttribute('aria-current', 'page');
+    if (a.dataset.tab === (tabFor[view] || view)) a.setAttribute('aria-current', 'page');
     else a.removeAttribute('aria-current');
   });
   active = views[view](el);

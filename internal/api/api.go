@@ -44,7 +44,9 @@ type Player interface {
 	Do(player.Command) bool
 	Status() player.Status
 	Preview() []byte
-	UpNext(n int) []library.Photo
+	UpNext(n int) []library.Photo // n < 0: everything coming up
+	Show(photoID string) error
+	Move(photoID string, pos player.Position) error
 }
 
 // Thumbnailer makes thumbnails.
@@ -86,6 +88,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/photos", s.listPhotos)
 	mux.HandleFunc("GET /api/photos/{id}/thumb", s.thumb)
 	mux.HandleFunc("GET /api/photos/{id}/image", s.image)
+	mux.HandleFunc("POST /api/photos/{id}/show", s.showPhoto)
+	mux.HandleFunc("POST /api/photos/{id}/queue", s.movePhoto)
+	mux.HandleFunc("GET /api/queue", s.queue)
 	mux.HandleFunc("GET /api/photos/{id}/adjustment", s.getAdjustment)
 	mux.HandleFunc("PUT /api/photos/{id}/adjustment", s.putAdjustment)
 	mux.HandleFunc("DELETE /api/photos/{id}/adjustment", s.deleteAdjustment)

@@ -138,7 +138,8 @@ internal/config      settings types, validation, atomic JSON store with change n
 internal/adjust      per-photo rotation, framing, zoom, alignment and brightness, stored by photo ID
 internal/source      Dir (uploads/folders), Immich, URL image sources
 internal/library     merges enabled sources into one catalogue; keeps cached photos on errors
-internal/playlist    next/previous: shuffle deck (no repeats per cycle), newest, oldest, on-this-day
+internal/playlist    next/previous: shuffle deck (no repeats per cycle), newest, oldest, on-this-day;
+                     play-next and move-to-back queueing, and jumping to a chosen photo
 internal/schedule    when the next change is due, with quiet hours (including windows past midnight)
 internal/render      decode + EXIF orientation, smart/fill/fit with zoom and alignment, saturation/contrast,
                      Floyd–Steinberg / Atkinson / ordered dithering, captions, info screens
@@ -184,6 +185,9 @@ All responses are JSON unless noted.
 | `POST /api/sources/{id}/photos` | multipart upload (field `photos`) into an upload source |
 | `GET /api/photos?source=id`, `GET /api/photos/{id}/thumb`, `DELETE /api/photos/{id}` | photos |
 | `GET /api/photos/{id}/image` | a larger rendition (1280 px) for the editor |
+| `GET /api/queue` | every photo: the one on screen, what's coming up in order, and the rest |
+| `POST /api/photos/{id}/show` | put a photo on the frame now; the slideshow carries on from it |
+| `POST /api/photos/{id}/queue` | `{"position":"front"}` plays it next, `"back"` after every other photo |
 | `GET/PUT/DELETE /api/photos/{id}/adjustment` | a photo's own rotation, framing, zoom, position and brightness; re-renders it if on screen |
 | `GET /api/device`, `POST /api/device/restart` | device info, restart service |
 

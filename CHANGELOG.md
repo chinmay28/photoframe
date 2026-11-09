@@ -13,6 +13,13 @@ commit: one more than `main`'s current count.
 
 ## Unreleased
 
+- Tapping a photo in **Up next** opens a menu instead of acting straight
+  away: show it on the frame now, play it next, move it to the back of the
+  queue, adjust it, or delete it (uploaded photos only). **View all** on
+  the Now screen lists every photo in the order it will play, with the same
+  menu. Play next and move to back work in every order; in newest, oldest
+  and on-this-day the order keeps its place around them. Queue changes are
+  kept in memory, so a restart goes back to the normal order.
 - Photos can be adjusted one by one, and the frame remembers it per photo.
   Tap **Adjust** under the photo on the Now screen, or tap a photo in
   **Up next**, to rotate it, pick its own framing (smart, fill or fit),

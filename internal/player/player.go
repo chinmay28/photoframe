@@ -112,8 +112,9 @@ type Deps struct {
 
 // Player runs the slideshow. Create with New and start with Run.
 type Player struct {
-	d    Deps
-	cmds chan Command
+	d     Deps
+	cmds  chan Command
+	jumps chan string // photos to show now; only the latest request counts
 
 	mu         sync.Mutex
 	pl         *playlist.Playlist
@@ -151,7 +152,7 @@ func New(d Deps) *Player {
 	if d.Seed == 0 {
 		d.Seed = time.Now().UnixNano()
 	}
-	return &Player{d: d, cmds: make(chan Command, 8), pl: playlist.New(d.Seed)}
+	return &Player{d: d, cmds: make(chan Command, 8), jumps: make(chan string, 1), pl: playlist.New(d.Seed)}
 }
 
 // Do queues a command. It never blocks; if the queue is full the command is
@@ -163,6 +164,65 @@ func (p *Player) Do(c Command) bool {
 	default:
 		return false
 	}
+}
+
+// Errors from Show and Move.
+var (
+	ErrNoPhoto  = errors.New("no such photo in the slideshow")
+	ErrOnScreen = errors.New("that photo is already on the frame")
+)
+
+// Show asks Run to put a photo on the frame now. The slideshow then carries
+// on from it. It never blocks: a newer request replaces one not yet acted on.
+func (p *Player) Show(id string) error {
+	if !contains(p.d.Library.Photos(), id) {
+		return ErrNoPhoto
+	}
+	for {
+		select {
+		case p.jumps <- id:
+			return nil
+		default:
+		}
+		select {
+		case <-p.jumps: // drop the stale request
+		default:
+		}
+	}
+}
+
+// Position is where Move puts a photo in the queue.
+type Position string
+
+const (
+	Front Position = "front" // shown next
+	Back  Position = "back"  // shown after every other photo
+)
+
+// Move reorders the queue. It does not touch the panel.
+func (p *Player) Move(id string, pos Position) error {
+	photos := p.d.Library.Photos()
+	if !contains(photos, id) {
+		return ErrNoPhoto
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.current != nil && p.current.ID == id && p.screen == ScreenPhoto {
+		return ErrOnScreen
+	}
+	var ok bool
+	switch pos {
+	case Front:
+		ok = p.pl.PlayNext(id)
+	case Back:
+		ok = p.pl.PlayLast(photos, id)
+	default:
+		return fmt.Errorf("unknown position %q", pos)
+	}
+	if !ok {
+		return ErrOnScreen
+	}
+	return nil
 }
 
 // Status returns the current state. The current photo's details come from
@@ -198,7 +258,7 @@ func (p *Player) Preview() []byte {
 	return p.preview
 }
 
-// UpNext returns the next n photos in order.
+// UpNext returns the next n photos in order; n < 0 returns all of them.
 func (p *Player) UpNext(n int) []library.Photo {
 	photos := p.d.Library.Photos()
 	s := p.d.Settings()
@@ -267,6 +327,9 @@ func (p *Player) Run(ctx context.Context) error {
 		case c := <-p.cmds:
 			stop(timer)
 			p.handle(ctx, p.latest(c))
+		case id := <-p.jumps:
+			stop(timer)
+			p.jump(ctx, s, id)
 		case <-p.d.SettingsChanged:
 			stop(timer)
 		case <-p.d.Library.Changed():
@@ -332,6 +395,29 @@ func (p *Player) handle(ctx context.Context, c Command) {
 		p.save()
 	case Info:
 		p.showMessage(ctx, s, ScreenInfo, s.Name)
+	}
+}
+
+// jump shows one chosen photo now.
+func (p *Player) jump(ctx context.Context, s config.Settings, id string) {
+	photos := p.d.Library.Photos()
+	var ph library.Photo
+	for _, x := range photos {
+		if x.ID == id {
+			ph = x
+		}
+	}
+	p.mu.Lock()
+	ok := p.pl.Jump(photos, id)
+	p.mu.Unlock()
+	if !ok {
+		return // removed since it was asked for
+	}
+	if err := p.showPhoto(ctx, s, ph); err != nil {
+		p.fail(err)
+		if isDisplayError(err) {
+			p.setPending(&ph)
+		}
 	}
 }
 

@@ -163,3 +163,146 @@ func TestDayDistanceWrapsYear(t *testing.T) {
 		t.Fatalf("dayDistance = %d, want 3", d)
 	}
 }
+
+func ids(ps []library.Photo) string {
+	var s []string
+	for _, p := range ps {
+		s = append(s, p.ID)
+	}
+	return fmt.Sprint(s)
+}
+
+// nextN calls Next n times and returns the IDs shown.
+func nextN(pl *Playlist, ps []library.Photo, order config.Order, n int) string {
+	var out []library.Photo
+	for i := 0; i < n; i++ {
+		ph, _ := pl.Next(ps, order, now)
+		out = append(out, ph)
+	}
+	return ids(out)
+}
+
+func TestPlayNextJumpsTheQueue(t *testing.T) {
+	ps := photos(5)
+	for _, order := range []config.Order{config.OrderShuffle, config.OrderOldest, config.OrderNewest} {
+		pl := New(4)
+		pl.Next(ps, order, now)
+		up := pl.Upcoming(ps, order, now, -1)
+		last := up[len(up)-1].ID
+		if !pl.PlayNext(last) {
+			t.Fatalf("%s: PlayNext refused", order)
+		}
+		if got := pl.Upcoming(ps, order, now, 1); got[0].ID != last {
+			t.Fatalf("%s: upcoming[0] = %s, want %s", order, got[0].ID, last)
+		}
+		// The rest keep their order.
+		want := ids(append([]library.Photo{up[len(up)-1]}, up[:len(up)-1]...))
+		if got := ids(pl.Upcoming(ps, order, now, -1)); got != want {
+			t.Fatalf("%s: upcoming = %s, want %s", order, got, want)
+		}
+		if ph, _ := pl.Next(ps, order, now); ph.ID != last {
+			t.Fatalf("%s: Next = %s, want %s", order, ph.ID, last)
+		}
+	}
+}
+
+func TestPlayNextStacksNewestFirst(t *testing.T) {
+	ps := photos(6)
+	pl := New(1)
+	pl.Next(ps, config.OrderOldest, now) // p00
+	pl.PlayNext("p04")
+	pl.PlayNext("p05")
+	if got := nextN(pl, ps, config.OrderOldest, 4); got != "[p05 p04 p01 p02]" {
+		t.Fatalf("shown %s", got)
+	}
+}
+
+func TestPlayLastWaitsForEveryOtherPhoto(t *testing.T) {
+	ps := photos(5)
+	pl := New(1)
+	pl.Next(ps, config.OrderOldest, now) // p00 on screen
+	if !pl.PlayLast(ps, "p01") {
+		t.Fatal("PlayLast refused")
+	}
+	if got := ids(pl.Upcoming(ps, config.OrderOldest, now, -1)); got != "[p02 p03 p04 p01]" {
+		t.Fatalf("upcoming = %s", got)
+	}
+	// p01 waits its turn; then the order wraps round as usual.
+	if got := nextN(pl, ps, config.OrderOldest, 5); got != "[p02 p03 p04 p01 p00]" {
+		t.Fatalf("shown %s", got)
+	}
+}
+
+func TestPlayLastInShuffle(t *testing.T) {
+	ps := photos(6)
+	pl := New(9)
+	pl.Next(ps, config.OrderShuffle, now)
+	first := pl.Upcoming(ps, config.OrderShuffle, now, 1)[0].ID
+	pl.PlayLast(ps, first)
+	shown := nextN(pl, ps, config.OrderShuffle, 5)
+	if want := first + "]"; shown[len(shown)-len(want):] != want {
+		t.Fatalf("shown %s, want %s last", shown, first)
+	}
+}
+
+func TestPlayNextAfterPlayLastUndoesIt(t *testing.T) {
+	ps := photos(4)
+	pl := New(1)
+	pl.Next(ps, config.OrderOldest, now)
+	pl.PlayLast(ps, "p02")
+	pl.PlayNext("p02")
+	if got := pl.Upcoming(ps, config.OrderOldest, now, 1)[0].ID; got != "p02" {
+		t.Fatalf("upcoming[0] = %s", got)
+	}
+}
+
+func TestQueueRefusesCurrentAndUnknown(t *testing.T) {
+	ps := photos(3)
+	pl := New(1)
+	cur, _ := pl.Next(ps, config.OrderOldest, now)
+	if pl.PlayNext(cur.ID) || pl.PlayLast(ps, cur.ID) {
+		t.Fatal("queued the photo on screen")
+	}
+	if pl.PlayLast(ps, "nope") {
+		t.Fatal("queued an unknown photo")
+	}
+}
+
+func TestQueuedPhotoRemovedIsSkipped(t *testing.T) {
+	ps := photos(4)
+	pl := New(1)
+	pl.Next(ps, config.OrderOldest, now)
+	pl.PlayNext("p03")
+	if ph, _ := pl.Next(ps[:3], config.OrderOldest, now); ph.ID == "p03" {
+		t.Fatal("showed a queued photo that was removed")
+	}
+}
+
+func TestJump(t *testing.T) {
+	ps := photos(5)
+	pl := New(1)
+	pl.Next(ps, config.OrderOldest, now) // p00
+	pl.PlayNext("p03")
+	if !pl.Jump(ps, "p03") || pl.Current() != "p03" {
+		t.Fatalf("Jump: current = %s", pl.Current())
+	}
+	// Jumping consumed the queued entry, and the order carries on from p03.
+	if got := nextN(pl, ps, config.OrderOldest, 2); got != "[p04 p00]" {
+		t.Fatalf("after jump shown %s", got)
+	}
+	if prev, _ := pl.Prev(ps); prev.ID != "p04" {
+		t.Fatalf("Prev = %s", prev.ID)
+	}
+	if pl.Jump(ps, "nope") {
+		t.Fatal("jumped to an unknown photo")
+	}
+}
+
+func TestUpcomingAllListsEveryOtherPhotoInSortedOrders(t *testing.T) {
+	ps := photos(5)
+	pl := New(1)
+	pl.Next(ps, config.OrderNewest, now)
+	if got := pl.Upcoming(ps, config.OrderNewest, now, -1); len(got) != 4 {
+		t.Fatalf("upcoming = %s", ids(got))
+	}
+}

@@ -56,6 +56,27 @@ func (l *fakeLib) SyncSource(_ context.Context, id string) error {
 type fakePlayer struct {
 	cmds    []player.Command
 	current *library.Photo
+	upNext  []library.Photo
+	shown   []string
+	moves   []string
+}
+
+func (p *fakePlayer) Show(id string) error {
+	if id == "nope" {
+		return player.ErrNoPhoto
+	}
+	p.shown = append(p.shown, id)
+	return nil
+}
+func (p *fakePlayer) Move(id string, pos player.Position) error {
+	if p.current != nil && p.current.ID == id {
+		return player.ErrOnScreen
+	}
+	if id == "nope" {
+		return player.ErrNoPhoto
+	}
+	p.moves = append(p.moves, id+":"+string(pos))
+	return nil
 }
 
 func (p *fakePlayer) Do(c player.Command) bool { p.cmds = append(p.cmds, c); return true }
@@ -63,7 +84,7 @@ func (p *fakePlayer) Status() player.Status {
 	return player.Status{Screen: player.ScreenPhoto, Current: p.current}
 }
 func (p *fakePlayer) Preview() []byte              { return []byte("png") }
-func (p *fakePlayer) UpNext(n int) []library.Photo { return nil }
+func (p *fakePlayer) UpNext(n int) []library.Photo { return p.upNext }
 
 type fakeThumbs struct{ removed []string }
 
