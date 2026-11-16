@@ -9,6 +9,20 @@ tuning and the panel type.
 It starts on boot, keeps showing the configured slideshow, and keeps working
 offline from its cache.
 
+## Android app
+
+`photoframe.apk`, attached to every release, is the same app for Android
+phones, plus three things a browser can't do: it finds the frame on the
+Wi-Fi by itself (and opens `photoframe.local` on phones that can't), it
+shows up in your gallery's **Share** menu to send photos straight to the
+frame (HEIC included), and a long press on its icon gives the frame's next,
+previous and pause buttons. It is a thin client: the Pi drives the panel.
+
+Install it from
+<https://github.com/chinmay28/photoframe/releases/latest/download/photoframe.apk>.
+How to use it is in [docs/android.md](docs/android.md), how it is built in
+[apps/android/README.md](apps/android/README.md).
+
 ## Hardware
 
 - Raspberry Pi Zero 2 W running Raspberry Pi OS **Bookworm or later**. The
@@ -95,6 +109,8 @@ prints is also logged to `/var/log/photoframe-quickstart.log`.
      are missing. The driver drives chip-select itself on GPIO 8, as
      Pimoroni's library does.
    - installs and enables `photoframe.service`
+   - announces the app over mDNS (`_photoframe._tcp`, an Avahi service file),
+     so the Android app can find the frame
 3. If the installer says so, reboot once: `sudo reboot`.
 4. On your phone, open **http://photoframe.local** and use *Add to Home
    Screen* to install the app.
@@ -150,7 +166,9 @@ internal/buttons     A–D buttons with debounce
 internal/sysinfo     temperature, uptime, Wi-Fi signal for the Device screen
 internal/version     vYEAR.MONTH.PATCH; the ingredients are stamped at link time
 web/                 the PWA (plain ES modules, no build step)
-deploy/              install.sh and the systemd unit
+apps/android/        the Android app: a thin client around the PWA (see its README)
+cmd/photoframe-icons the Android icons, derived from web/icons/icon.svg (make icons)
+deploy/              install.sh (which also announces the app over mDNS) and the systemd unit
 scripts/
   quickstart.sh      one-command install / upgrade / rollback / uninstall on the Pi
   version.sh         the only place the version ingredients are computed
@@ -202,6 +220,8 @@ make test     # unit tests, with the race detector
 make dev      # run on a laptop; frames go to devdata/display.png
 make version  # the version this tree builds as
 make release  # Pi release bundles in dist/
+make android  # the Android app (needs a JDK 17+ and the Android SDK)
+make icons    # redraw the Android icons from web/icons/icon.svg
 ```
 
 Open http://localhost:8080. The PNG display simulates a 2-second refresh
@@ -239,10 +259,15 @@ count, so it also builds patch 0; clone with `--filter=blob:none` instead.
 
 The version shows in `photoframe -version`, the startup log, `/api/device`
 and the About card at the bottom of the app's Device screen, next to the
-developer badge.
+developer badge. The Android app is stamped with the same version
+(`-PappVersionName`, and the commit count as `-PappVersionCode`).
 
 `make release` builds `dist/photoframe-<version>-linux-{arm64,armv7}.tar.gz`
 and `SHA256SUMS`. Each tarball holds the binary, `install.sh` and the unit.
+The release workflow adds the Android app as `photoframe.apk` (a fixed
+name, so `releases/latest/download/photoframe.apk` always works), stamped
+with the same version as its name and the commit count as its version code,
+and lists it in `SHA256SUMS` too.
 `.github/workflows/release.yml` runs on every push to `main`:
 
 - It always publishes the bundles as the `edge` pre-release, replacing the
@@ -255,7 +280,8 @@ and `SHA256SUMS`. Each tarball holds the binary, `install.sh` and the unit.
 
 ## Not yet supported
 
-- HEIC files. iOS converts photos to JPEG when you pick them in the upload
-  dialog.
+- HEIC files on the frame itself. iOS converts photos to JPEG when you pick
+  them in the upload dialog, and the Android app converts them when you share
+  them to the frame.
 - iCloud and Google Photos shared albums, which have no stable public API.
   Use Immich, a folder, or uploads instead.

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- web/app.css, prefers-color-scheme: dark. -->
+    <color name="pf_ground">#FF121314</color>
+    <color name="pf_ink">#FFEDEDEA</color>
+    <color name="pf_muted">#FFA3A7AE</color>
+    <color name="pf_line">#FF2F3135</color>
+    <color name="pf_accent">#FF7C9BFF</color>
+    <color name="pf_accent_ink">#FF0E1430</color>
+</resources>

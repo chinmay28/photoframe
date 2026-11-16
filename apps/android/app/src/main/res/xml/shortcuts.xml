@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Long-press the icon: the frame's own A, B and C buttons, without opening
+     the app, and the app's settings, reachable whatever the frame's page
+     offers. The actions are core/Control's; FrameApiTest checks they match.
+     ControlActivity is not exported: a launcher starts a shortcut as this
+     app, so no other app can press the frame's buttons through it. -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_next"
+        android:shortcutId="next"
+        android:shortcutLongLabel="@string/shortcut_next_long"
+        android:shortcutShortLabel="@string/shortcut_next">
+        <intent
+            android:action="io.github.chinmay28.photoframe.action.NEXT"
+            android:targetClass="io.github.chinmay28.photoframe.ControlActivity"
+            android:targetPackage="io.github.chinmay28.photoframe" />
+    </shortcut>
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_previous"
+        android:shortcutId="previous"
+        android:shortcutLongLabel="@string/shortcut_previous_long"
+        android:shortcutShortLabel="@string/shortcut_previous">
+        <intent
+            android:action="io.github.chinmay28.photoframe.action.PREVIOUS"
+            android:targetClass="io.github.chinmay28.photoframe.ControlActivity"
+            android:targetPackage="io.github.chinmay28.photoframe" />
+    </shortcut>
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_pause"
+        android:shortcutId="pause"
+        android:shortcutLongLabel="@string/shortcut_pause_long"
+        android:shortcutShortLabel="@string/shortcut_pause">
+        <intent
+            android:action="io.github.chinmay28.photoframe.action.PAUSE_OR_RESUME"
+            android:targetClass="io.github.chinmay28.photoframe.ControlActivity"
+            android:targetPackage="io.github.chinmay28.photoframe" />
+    </shortcut>
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_settings"
+        android:shortcutId="settings"
+        android:shortcutShortLabel="@string/settings_short">
+        <intent
+            android:action="io.github.chinmay28.photoframe.SETTINGS"
+            android:targetClass="io.github.chinmay28.photoframe.SettingsActivity"
+            android:targetPackage="io.github.chinmay28.photoframe" />
+    </shortcut>
+</shortcuts>

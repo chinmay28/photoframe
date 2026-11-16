@@ -63,6 +63,33 @@ if [[ -n $NEW_HOSTNAME ]] && [[ $(hostname) != "$NEW_HOSTNAME" ]]; then
   systemctl restart avahi-daemon 2>/dev/null || true
 fi
 
+# Announce the app on the network over mDNS, so the Android app's "Find on
+# this network" lists the frame and can reach photoframe.local on phones
+# whose resolver can't. Avahi (part of Raspberry Pi OS, and what already
+# answers for <hostname>.local) does the announcing from this file: nothing
+# runs in photoframe for it. The port is the one the unit listens on.
+AVAHI_SERVICES=/etc/avahi/services
+if [[ -d $AVAHI_SERVICES ]]; then
+  PORT=$(sed -n 's/.*-listen [^ ]*:\([0-9][0-9]*\).*/\1/p' "$HERE/photoframe.service" | head -n1)
+  echo "==> Announcing the app over mDNS (_photoframe._tcp, port ${PORT:-80})"
+  cat > "$AVAHI_SERVICES/photoframe.service" <<AVAHI
+<?xml version="1.0" standalone='no'?>
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+<!-- Written by photoframe's install.sh: the frame's app, for the Android
+     app's "Find on this network". Removed by quickstart.sh --uninstall. -->
+<service-group>
+  <name replace-wildcards="yes">%h</name>
+  <service>
+    <type>_photoframe._tcp</type>
+    <port>${PORT:-80}</port>
+    <txt-record>path=/</txt-record>
+  </service>
+</service-group>
+AVAHI
+  # Avahi picks up new service files by itself; a reload makes it immediate.
+  systemctl reload avahi-daemon 2>/dev/null || true
+fi
+
 echo "==> Installing systemd service"
 install -m 0644 "$HERE/photoframe.service" /etc/systemd/system/photoframe.service
 systemctl daemon-reload

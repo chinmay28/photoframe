@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The frame on a home network is plain HTTP on a .local name or a private
+     address; there is no certificate it could get. A frame behind TLS with a
+     certificate from a private CA works once that CA is installed on the
+     phone, which is why user certificates are trusted as well as the
+     system's. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

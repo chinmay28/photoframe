@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Light or dark with the phone, as the frame's web app is. No window
+         action bar: the settings screen has its own toolbar, which it keeps
+         out from under the status bar on an edge-to-edge Android. -->
+    <style name="Theme.Photoframe" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/pf_accent</item>
+        <item name="colorOnPrimary">@color/pf_accent_ink</item>
+        <item name="colorSecondary">@color/pf_accent</item>
+        <item name="android:colorBackground">@color/pf_ground</item>
+        <item name="colorSurface">@color/pf_ground</item>
+        <item name="colorOnSurface">@color/pf_ink</item>
+        <item name="android:windowBackground">@color/pf_ground</item>
+    </style>
+
+    <!-- The shortcut and share screens: nothing of their own on screen but a
+         toast or a dialog over whatever was there. -->
+    <style name="Theme.Photoframe.Invisible" parent="Theme.Photoframe">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
+
+    <!-- The developer badge, full screen over everything. -->
+    <style name="Theme.Photoframe.DevFlash" parent="Theme.Photoframe">
+        <item name="android:windowIsFloating">false</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
+
+    <style name="ShapeAppearance.Photoframe.Circle" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">50%</item>
+    </style>
+</resources>

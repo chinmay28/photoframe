@@ -1,0 +1,95 @@
+name: Android app
+
+# Builds the phone app and runs its tests whenever it changes, or anything it
+# is checked against: the upload handler its "Share to Photoframe" posts to
+# (internal/api, testdata/android-upload.multipart), the installer's mDNS
+# announcement its "Find on this network" looks for (deploy/install.sh), and
+# the artwork its icons are made from (web/icons, cmd/photoframe-icons). The
+# app is a thin client, so the APK carries no Go.
+
+on:
+  pull_request:
+    paths:
+      - "apps/android/**"
+      - "internal/api/**"
+      - "deploy/install.sh"
+      - "web/icons/**"
+      - "cmd/photoframe-icons/**"
+      - ".github/workflows/android.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/android/**"
+      - "internal/api/**"
+      - "deploy/install.sh"
+      - "web/icons/**"
+      - "cmd/photoframe-icons/**"
+      - ".github/workflows/android.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and test the APK
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/android
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the version name is the commit count; shallow = 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # The Go side of the app's contracts: the upload body the app writes,
+      # and the icons derived from the frame's artwork.
+      - name: Frame-side tests
+        working-directory: .
+        run: go test -count=1 -run 'TestAndroidAppUpload' ./internal/api/ && go test -count=1 ./cmd/photoframe-icons/
+
+      # Everything the app decides, as plain JVM tests.
+      - name: Unit tests
+        run: ./gradlew --no-daemon :core:test
+
+      # The runner image ships the Android SDK; ANDROID_HOME points at it.
+      - name: Lint
+        run: ./gradlew --no-daemon :app:lintDebug
+
+      - name: Build
+        run: |
+          ./gradlew --no-daemon :app:assembleRelease \
+            -PappVersionName="$(../../scripts/version.sh)" \
+            -PappVersionCode="$(../../scripts/version.sh --patch | sed 's/^0$/1/')"
+
+      # What the APK must carry: the page bridge, the launcher shortcuts and
+      # the share target — any of them missing still builds, and then quietly
+      # does less — and no native code, which a thin client has no use for.
+      # A release build shortens resource paths, so resources are looked up
+      # by name with aapt2 rather than in the zip listing.
+      - name: Check the APK
+        run: |
+          apk=$(ls app/build/outputs/apk/release/*.apk)
+          aapt2=$(ls "$ANDROID_HOME"/build-tools/*/aapt2 | sort -V | tail -n1)
+          unzip -l "$apk" | grep -q " assets/photoframe-bridge.js$" || { echo "no bridge script in $apk" >&2; exit 1; }
+          "$aapt2" dump resources "$apk" | grep -q "xml/shortcuts" || { echo "no shortcuts in $apk" >&2; exit 1; }
+          "$aapt2" dump xmltree --file AndroidManifest.xml "$apk" | grep -q "android.intent.action.SEND_MULTIPLE" || { echo "no share target in $apk" >&2; exit 1; }
+          if unzip -l "$apk" | grep -q " lib/"; then echo "native libraries in a thin client: $apk" >&2; exit 1; fi
+          echo "APK contents OK"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: photoframe-apk
+          path: apps/android/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error

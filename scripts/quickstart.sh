@@ -128,6 +128,11 @@ if [ "$UNINSTALL" = 1 ]; then
   rm -f "$UNIT" "$BIN"
   rm -rf "$STATE_DIR" /var/cache/photoframe-build
   systemctl daemon-reload
+  # The mDNS announcement install.sh wrote for the Android app.
+  if [ -f /etc/avahi/services/photoframe.service ]; then
+    rm -f /etc/avahi/services/photoframe.service
+    systemctl reload avahi-daemon 2>/dev/null || :
+  fi
   if [ "${PHOTOFRAME_PURGE:-0}" = 1 ]; then
     rm -rf "$DATA_DIR"
     userdel photoframe 2>/dev/null || :
