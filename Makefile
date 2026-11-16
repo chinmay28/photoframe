@@ -5,7 +5,7 @@ LDFLAGS := -s -w $(shell scripts/version.sh --ldflags 2>/dev/null)
 GO      ?= go
 PI      ?= pi@photoframe.local
 
-.PHONY: all build pi pi32 test vet dev deploy release version clean
+.PHONY: all build pi pi32 test vet dev deploy release version icons icons-check android clean
 
 all: vet test pi
 
@@ -15,6 +15,22 @@ build:
 # Print the version this tree builds as.
 version:
 	@scripts/version.sh
+
+# The Android app's icons, derived from web/icons/icon.svg (see
+# apps/android/README.md). `go test ./cmd/photoframe-icons` fails when they drift.
+icons:
+	$(GO) run ./cmd/photoframe-icons
+
+icons-check:
+	$(GO) run ./cmd/photoframe-icons -check
+
+# The Android app (apps/android), stamped as the release workflow does.
+# Needs a JDK 17+ and the Android SDK (ANDROID_HOME).
+android:
+	cd apps/android && ./gradlew --no-daemon :core:test :app:assembleRelease \
+		-PappVersionName=$$(../../scripts/version.sh) \
+		-PappVersionCode=$$(../../scripts/version.sh --patch | sed 's/^0$$/1/')
+	@ls apps/android/app/build/outputs/apk/release/*.apk
 
 # Release tarballs for the Pi (arm64 and armv7) plus SHA256SUMS, in dist/.
 release:
