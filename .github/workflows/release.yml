@@ -17,6 +17,10 @@
 #
 # scripts/quickstart.sh installs from these releases, so the asset names are a
 # contract: photoframe-<version>-linux-{arm64,armv7}.tar.gz and SHA256SUMS.
+# Beside them goes the Android app as photoframe.apk, a name that never
+# changes, so .../releases/latest/download/photoframe.apk is always the newest
+# release's app. Its line in SHA256SUMS ends in .apk, which quickstart's
+# lookup by "-linux-<arch>.tar.gz" never matches.
 name: release
 
 on:
@@ -47,6 +51,12 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # For the Android app. The runner image ships the Android SDK.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
       - name: Compute version
         id: version
         run: |
@@ -60,6 +70,7 @@ jobs:
             exit 1
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "patch=$(scripts/version.sh --patch)" >> "$GITHUB_OUTPUT"
 
       # The changelog heading gates the release. A push to main whose version
       # has no section is an ordinary commit and is skipped. A tag or manual
@@ -89,6 +100,24 @@ jobs:
       - name: Build release bundles
         run: scripts/build-release.sh
 
+      # The phone app, stamped with this commit's version: the name the
+      # bundles carry, and the commit count as the version code, which only
+      # grows. A thin client, so it carries no Go and builds the same for
+      # every release line.
+      - name: Build photoframe.apk
+        working-directory: apps/android
+        run: |
+          ./gradlew --no-daemon :core:test :app:assembleRelease \
+            -PappVersionName="${{ steps.version.outputs.version }}" \
+            -PappVersionCode="${{ steps.version.outputs.patch }}"
+          apks=(app/build/outputs/apk/release/*.apk)
+          if [ "${#apks[@]}" -ne 1 ] || [ ! -f "${apks[0]}" ]; then
+            echo "expected exactly one release APK, found: ${apks[*]}" >&2
+            exit 1
+          fi
+          cp "${apks[0]}" ../../dist/photoframe.apk
+          (cd ../../dist && sha256sum photoframe.apk >> SHA256SUMS)
+
       - name: Publish release
         if: steps.notes.outputs.release == 'true'
         env:
@@ -101,6 +130,7 @@ jobs:
           fi
           gh release create "${VERSION}" \
             dist/photoframe-${VERSION}-linux-*.tar.gz \
+            dist/photoframe.apk \
             dist/SHA256SUMS \
             --target "${GITHUB_SHA}" \
             --title "${VERSION}" \
@@ -117,6 +147,7 @@ jobs:
           gh release delete edge --cleanup-tag --yes >/dev/null 2>&1 || true
           gh release create edge \
             dist/photoframe-${VERSION}-linux-*.tar.gz \
+            dist/photoframe.apk \
             dist/SHA256SUMS \
             --prerelease \
             --target "${GITHUB_SHA}" \

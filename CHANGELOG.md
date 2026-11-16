@@ -13,6 +13,27 @@ commit: one more than `main`'s current count.
 
 ## Unreleased
 
+- **Photoframe for Android.** Download `photoframe.apk` from this release, or
+  always the newest at
+  <https://github.com/chinmay28/photoframe/releases/latest/download/photoframe.apk>
+  (Android 10 or newer). It opens the frame's app full screen, and adds what
+  a browser can't:
+  - It finds the frame by itself. **Find on this network** lists the frames
+    on your Wi-Fi, and `photoframe.local` works in the app even on phones
+    that can't open `.local` names, which many Android phones can't.
+  - **Share → Photoframe** from Google Photos, the Gallery or Files sends
+    photos straight to the frame's upload source. HEIC photos are converted
+    to JPEG on the phone first, so they show on the frame too.
+  - A long press on its icon gives **Next photo**, **Previous** and
+    **Pause / resume**, the frame's A, B and C buttons, without opening the
+    app. Drag them to the home screen to keep them there.
+
+  It is a thin client: the frame does the work, so it has to be on. See
+  [docs/android.md](docs/android.md).
+- The frame announces itself on the network (mDNS, `_photoframe._tcp`, through
+  the Avahi that Raspberry Pi OS already runs), which is how the app finds
+  it. The installer adds the announcement and `--uninstall` removes it;
+  nothing extra runs on the Pi.
 - The app is much faster and steadier on a Pi Zero 2 W.
   - Thumbnails and the editor's image are made about 3.5× and 6× faster
     (a 12 MP JPEG, measured on a laptop), and loading a photo for the panel
