@@ -11,7 +11,7 @@ the section as the release notes. To cut a release, add the section in the
 commit that will be that version. With squash merges, that is the merge
 commit: one more than `main`'s current count.
 
-## Unreleased
+## v2026.11.11
 
 - **Photoframe for Android.** Download `photoframe.apk` from this release, or
   always the newest at
