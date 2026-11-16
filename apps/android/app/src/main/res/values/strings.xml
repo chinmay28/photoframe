@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Photoframe</string>
+    <string name="tagline">E-ink photo frame</string>
+    <string name="settings_title">App settings</string>
+    <string name="settings_short">Settings</string>
+    <string name="share_label">Photoframe</string>
+
+    <!-- First run -->
+    <string name="setup_intro">Which frame? Its address is on the frame itself: press button D. You can change this later in the app\'s settings.</string>
+    <string name="setup_address">Frame address</string>
+    <string name="setup_address_hint">e.g. photoframe.local or 192.168.1.20</string>
+    <string name="setup_find">Find on this network</string>
+    <string name="setup_finding">Looking…</string>
+    <string name="setup_found_item">%1$s — %2$s</string>
+    <string name="setup_found_none">No frame answered. Type its address instead, or update the frame so it announces itself (run its quick start again).</string>
+    <string name="setup_continue">Continue</string>
+    <string name="setup_version">Version %1$s</string>
+    <string name="setup_thin">The frame does the work: this app opens its controls and sends it photos, and needs the frame to be on.</string>
+
+    <!-- Main screen -->
+    <string name="finding">Looking for %1$s on this network…</string>
+    <string name="connecting">Connecting to %1$s…</string>
+    <string name="cannot_reach">Cannot reach %1$s</string>
+    <string name="cannot_find">Cannot find %1$s on this network</string>
+    <string name="cannot_find_detail">The phone must be on the frame\'s Wi-Fi. If it is, try the frame\'s IP address instead (press button D on the frame to see it).</string>
+    <string name="bad_certificate">%1$s has a certificate this phone does not trust. Install its CA in Android\'s settings, or connect over http on your own network.</string>
+    <string name="retry">Retry</string>
+    <string name="open_settings">App settings</string>
+    <string name="no_app_for_link">No app on this phone opens that link.</string>
+
+    <!-- Shortcuts -->
+    <string name="shortcut_next">Next photo</string>
+    <string name="shortcut_next_long">Show the next photo</string>
+    <string name="shortcut_previous">Previous</string>
+    <string name="shortcut_previous_long">Show the previous photo</string>
+    <string name="shortcut_pause">Pause / resume</string>
+    <string name="shortcut_pause_long">Pause or resume the slideshow</string>
+    <string name="control_next">Next photo: the frame is redrawing</string>
+    <string name="control_prev">Previous photo: the frame is redrawing</string>
+    <string name="control_pause">Slideshow paused</string>
+    <string name="control_resume">Slideshow resumed</string>
+    <string name="control_busy">The frame is busy. Try again in a moment.</string>
+    <string name="control_failed">Photoframe: %1$s</string>
+    <string name="not_set_up">Open Photoframe once to choose your frame.</string>
+
+    <!-- Sharing -->
+    <string name="share_title">Send to the frame</string>
+    <string name="share_preparing">Getting ready…</string>
+    <string name="share_converting">Converting %1$s to JPEG…</string>
+    <string name="share_sending">Sending %1$d of %2$d…</string>
+    <string name="share_waiting">Waiting for the frame…</string>
+    <plurals name="share_sent">
+        <item quantity="one">Sent %1$d photo to %2$s.</item>
+        <item quantity="other">Sent %1$d photos to %2$s.</item>
+    </plurals>
+    <string name="share_left_out">Left out:\n%1$s</string>
+    <string name="share_none">Nothing to send: share photos (JPEG, PNG, GIF, WebP or HEIC).</string>
+    <string name="share_no_source">The frame has no Upload source. Add one under Sources in the app, then share again.</string>
+    <string name="share_failed">Could not send: %1$s</string>
+    <string name="share_not_image">not an image the frame can show</string>
+    <string name="share_unreadable">could not be read</string>
+    <string name="share_open_app">Open Photoframe</string>
+    <string name="share_done">Done</string>
+
+    <!-- Settings -->
+    <string name="pref_cat_frame">Frame</string>
+    <string name="pref_address">Frame address</string>
+    <string name="pref_find">Find frames on this network</string>
+    <string name="pref_find_summary">Lists the frames that announce themselves on this Wi-Fi.</string>
+    <string name="pref_cat_about">About</string>
+    <string name="pref_version">Version</string>
+    <string name="pref_thin">How it works</string>
+    <string name="pref_thin_summary">A thin client: the frame runs the slideshow and drives the panel. Long-press the app\'s icon for next, previous and pause, and use Share → Photoframe in your gallery to send it photos.</string>
+    <string name="pref_developer">Developer</string>
+    <string name="pref_developer_summary">github.com/chinmay28</string>
+
+    <!-- Developer badge -->
+    <string name="dev_badge">Show the developer badge</string>
+    <string name="dev_badge_full">Built by CM Hegday — 0x434d</string>
+    <string name="dev_link">github.com/chinmay28</string>
+</resources>

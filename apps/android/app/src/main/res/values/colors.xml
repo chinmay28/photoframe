@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- web/app.css :root, light. The night values are its dark scheme. -->
+    <color name="pf_ground">#FFF5F5F2</color>
+    <color name="pf_ink">#FF17181A</color>
+    <color name="pf_muted">#FF5B5F66</color>
+    <color name="pf_line">#FFE2E2DD</color>
+    <color name="pf_accent">#FF2F55D4</color>
+    <color name="pf_accent_ink">#FFFFFFFF</color>
+    <!-- The developer badge's flash: .dev-veil and .dev-lockup span. -->
+    <color name="dev_veil">#C70A0E17</color>
+    <color name="dev_text">#FFC9CCD2</color>
+    <color name="dev_badge_plate">#FF101010</color>
+</resources>
