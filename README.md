@@ -95,7 +95,7 @@ prints is also logged to `/var/log/photoframe-quickstart.log`.
 ## Install from your computer
 
 1. Flash Raspberry Pi OS Lite as above.
-2. On your computer, with Go 1.24 or later installed:
+2. On your computer, with Go 1.26.4 or later installed:
 
    ```sh
    make deploy PI=pi@photoframe.local
@@ -142,6 +142,15 @@ sudo systemctl restart photoframe
 | Immich | One Immich album. Uses Immich's preview-size images (about 1440 px), which are cached on the SD card. Captions use Immich's place names. |
 | Image URL | A single image URL, re-fetched on every sync with conditional requests. Good for "picture of the day" feeds. |
 
+Uploads, folders and image URLs can be JPEG, PNG, GIF, WebP or HEIC/HEIF
+(`.heic`, `.heif`, as iPhones and many Android phones save photos). HEIC is
+decoded on the Pi in pure Go ([gen2brain/h265](https://github.com/gen2brain/h265)),
+so nothing extra needs installing. It decodes about three times slower than
+JPEG, which can add seconds per photo on a Pi Zero 2 W before the panel
+starts its refresh. The Android app still converts HEIC to a smaller JPEG
+when you share. A HEIC photo is turned upright by the rotation stored in the
+file, and dated by its EXIF.
+
 Sources sync at startup, every 15 minutes (`-sync-interval`), and on demand
 from the app. If a remote source can't be reached, its cached photos stay in
 rotation.
@@ -157,6 +166,7 @@ internal/library     merges enabled sources into one catalogue; keeps cached pho
 internal/playlist    next/previous: shuffle deck (no repeats per cycle), newest, oldest, on-this-day;
                      play-next and move-to-back queueing, and jumping to a chosen photo
 internal/schedule    when the next change is due, with quiet hours (including windows past midnight)
+internal/imagefmt    which image files are read (JPEG, PNG, GIF, WebP, HEIC); registers the decoders
 internal/render      decode + EXIF orientation, smart/fill/fit with zoom and alignment, saturation/contrast,
                      Floyd–Steinberg / Atkinson / ordered dithering, captions, info screens
 internal/inky        panel driver over spidev + GPIO character device (no cgo)
@@ -280,8 +290,5 @@ and lists it in `SHA256SUMS` too.
 
 ## Not yet supported
 
-- HEIC files on the frame itself. iOS converts photos to JPEG when you pick
-  them in the upload dialog, and the Android app converts them when you share
-  them to the frame.
 - iCloud and Google Photos shared albums, which have no stable public API.
   Use Immich, a folder, or uploads instead.

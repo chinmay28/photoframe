@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chinmay28/photoframe/internal/imagefmt/heictest"
 	"github.com/chinmay28/photoframe/internal/library"
 )
 
@@ -70,6 +71,32 @@ func TestDirListsImagesRecursively(t *testing.T) {
 	}
 	if !names["a.jpg"] || !names["b.PNG"] {
 		t.Fatalf("names = %v", names)
+	}
+}
+
+func TestDirListsHEIC(t *testing.T) {
+	root := t.TempDir()
+	heic := heictest.Encode(t, heictest.Gradient(16, 16), nil)
+	write(t, filepath.Join(root, "IMG_0001.HEIC"), heic)
+	write(t, filepath.Join(root, "IMG_0002.heif"), heic)
+	photos, err := (&Dir{SourceID: "up", Root: root}).Sync(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(photos) != 2 {
+		t.Fatalf("got %d photos: %+v", len(photos), photos)
+	}
+}
+
+func TestExifDateReadsHEIF(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "IMG_0003.HEIC")
+	write(t, path, heictest.Encode(t, heictest.Gradient(16, 16), heictest.DateTime("2023:08:14 10:00:00")))
+	if got, want := ExifDate(path), time.Date(2023, 8, 14, 10, 0, 0, 0, time.Local); !got.Equal(want) {
+		t.Fatalf("ExifDate = %v, want %v", got, want)
+	}
+	write(t, path, heictest.Encode(t, heictest.Gradient(16, 16), nil))
+	if got := ExifDate(path); !got.IsZero() {
+		t.Fatalf("ExifDate without EXIF = %v", got)
 	}
 }
 

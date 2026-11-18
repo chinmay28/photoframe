@@ -72,10 +72,11 @@ frame's upload source (*Uploaded from phones*, unless you renamed it — the
 same place the Upload button on the Sources screen puts them) and tells you
 how many arrived. They join the slideshow straight away.
 
-Photos the frame can't read itself are converted on the phone first: HEIC,
-what many phone cameras save, becomes a JPEG (at most 4096 pixels on its long
-side, plenty for the panel and for zooming in the editor). Videos and other
-files are left out, and the app says which.
+HEIC photos, what many phone cameras save, are converted on the phone first:
+each becomes a JPEG (at most 4096 pixels on its long side, plenty for the
+panel and for zooming in the editor), which is smaller to send and quicker
+for the frame to draw. So does any other image the frame can't read itself.
+Videos and other files are left out, and the app says which.
 
 If the frame has no upload source, add one under **Sources** in the app.
 
@@ -115,6 +116,3 @@ Everything about the frame itself is in the frame's app.
 - **Reach the frame from outside your home network.** The frame's app has no
   login and is meant for your home network only. Use a VPN such as Tailscale
   to reach it from elsewhere, and type the address it gives the Pi.
-- **HEIC from the Sources screen's Upload button.** That button is the web
-  app's own, so the file picker offers what the frame can read. Share HEIC
-  photos from your gallery instead, and the app converts them.

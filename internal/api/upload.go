@@ -93,7 +93,7 @@ var unsafeName = regexp.MustCompile(`[^A-Za-z0-9._ -]+`)
 func saveUpload(dir, original string, r io.Reader) (string, error) {
 	base := filepath.Base(strings.ReplaceAll(original, "\\", "/"))
 	if !source.IsImageName(base) {
-		return "", errors.New("not a JPEG, PNG, GIF or WebP file")
+		return "", errors.New("not a JPEG, PNG, GIF, WebP or HEIC file")
 	}
 	ext := strings.ToLower(filepath.Ext(base))
 	stem := strings.Trim(unsafeName.ReplaceAllString(strings.TrimSuffix(base, filepath.Ext(base)), "_"), " ._-")

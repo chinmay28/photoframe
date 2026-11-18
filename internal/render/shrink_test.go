@@ -7,6 +7,7 @@ import (
 	"image/jpeg"
 	"testing"
 
+	"github.com/chinmay28/photoframe/internal/imagefmt/heictest"
 	xdraw "golang.org/x/image/draw"
 )
 
@@ -165,5 +166,111 @@ func BenchmarkDecode12MP(b *testing.B) {
 				}
 			}
 		})
+	}
+}
+
+// pixelQuadrants is quadrants for the four-bytes-a-pixel image types.
+func pixelQuadrants(w, h int, nrgba bool) image.Image {
+	cols := [4][4]uint8{{200, 100, 160, 255}, {60, 180, 90, 255}, {120, 128, 128, 255}, {250, 60, 200, 255}}
+	var pix []uint8
+	var stride int
+	var img image.Image
+	if nrgba {
+		m := image.NewNRGBA(image.Rect(0, 0, w, h))
+		pix, stride, img = m.Pix, m.Stride, m
+	} else {
+		m := image.NewRGBA(image.Rect(0, 0, w, h))
+		pix, stride, img = m.Pix, m.Stride, m
+	}
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			copy(pix[y*stride+4*x:], cols[2*(2*y/h)+2*x/w][:])
+		}
+	}
+	return img
+}
+
+func TestShrinkPixelsAveragesBlocks(t *testing.T) {
+	for _, nrgba := range []bool{false, true} {
+		for _, f := range []int{2, 3, 4, 5, 8} {
+			src := pixelQuadrants(240, 240, nrgba) // quadrant edges on block edges, as above
+			got, ok := shrinkPixels(src, f)
+			if !ok {
+				t.Fatalf("nrgba=%v f=%d: not shrunk", nrgba, f)
+			}
+			if got.Bounds() != image.Rect(0, 0, 240/f, 240/f) {
+				t.Fatalf("nrgba=%v f=%d: bounds %v", nrgba, f, got.Bounds())
+			}
+			if _, same := got.(*image.NRGBA); same != nrgba {
+				t.Fatalf("nrgba=%v: result is %T", nrgba, got)
+			}
+			for y := 0; y < got.Bounds().Dy(); y++ {
+				for x := 0; x < got.Bounds().Dx(); x++ {
+					if c, want := got.At(x, y), src.At(x*f, y*f); c != want {
+						t.Fatalf("nrgba=%v f=%d at (%d,%d): %v, want %v", nrgba, f, x, y, c, want)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestShrinkPixelsMeanOfBlock(t *testing.T) {
+	src := image.NewNRGBA(image.Rect(0, 0, 2, 2))
+	copy(src.Pix, []uint8{0, 10, 100, 255, 10, 20, 101, 255, 20, 30, 102, 255, 30, 41, 103, 255})
+	got, ok := shrinkPixels(src, 2)
+	if !ok {
+		t.Fatal("not shrunk")
+	}
+	// (0+10+20+30)/4, (10+20+30+41)/4 rounded, (100+101+102+103)/4 rounded.
+	if c := got.(*image.NRGBA).NRGBAAt(0, 0); c != (color.NRGBA{15, 25, 102, 255}) {
+		t.Fatalf("mean %v", c)
+	}
+}
+
+// Sub-images must be read from their own origin and stride.
+func TestShrinkPixelsSubImage(t *testing.T) {
+	full := pixelQuadrants(64, 64, false).(*image.RGBA)
+	sub := full.SubImage(image.Rect(33, 31, 64, 64))
+	got, ok := shrinkPixels(sub, 3)
+	if !ok || got.Bounds() != image.Rect(0, 0, 10, 11) {
+		t.Fatalf("ok=%v bounds %v", ok, got.Bounds())
+	}
+	if c, want := got.At(5, 5), full.At(60, 60); c != want {
+		t.Fatalf("sub-image pixel %v, want %v", c, want)
+	}
+}
+
+func TestShrinkPixelsDeclines(t *testing.T) {
+	if _, ok := shrinkPixels(pixelQuadrants(8, 8, true), 1); ok {
+		t.Error("factor 1 shrunk")
+	}
+	if _, ok := shrinkPixels(pixelQuadrants(3, 8, false), 4); ok {
+		t.Error("image narrower than the factor shrunk")
+	}
+	if _, ok := shrinkPixels(image.NewGray(image.Rect(0, 0, 8, 8)), 2); ok {
+		t.Error("unsupported image type shrunk")
+	}
+}
+
+// As for JPEG, HEIC through the fast path must match the quality scaler.
+func TestDecodeHEICFastPathMatchesQualityScaler(t *testing.T) {
+	src := heictest.Gradient(1200, 900)
+	b := heictest.Encode(t, src, nil)
+	for _, maxSide := range []int{160, 500} {
+		got, err := Decode(b, maxSide)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := image.NewRGBA(got.Bounds())
+		xdraw.CatmullRom.Scale(want, want.Bounds(), src, src.Bounds(), xdraw.Src, nil)
+		var sum int
+		for i := range got.Pix {
+			d := int(got.Pix[i]) - int(want.Pix[i])
+			sum += max(d, -d)
+		}
+		if mean := float64(sum) / float64(len(got.Pix)); mean > 2 {
+			t.Errorf("maxSide %d: mean difference %.2f levels", maxSide, mean)
+		}
 	}
 }
