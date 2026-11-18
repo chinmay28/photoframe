@@ -8,9 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"image"
-	_ "image/gif" // decoders for validating downloads
-	_ "image/jpeg"
-	_ "image/png"
 	"io"
 	"net/http"
 	"net/url"
@@ -20,8 +17,8 @@ import (
 	"time"
 
 	"github.com/chinmay28/photoframe/internal/config"
+	_ "github.com/chinmay28/photoframe/internal/imagefmt" // decoders for validating downloads
 	"github.com/chinmay28/photoframe/internal/library"
-	_ "golang.org/x/image/webp"
 )
 
 // URLImage fetches a single image URL (for example an "art of the day" feed

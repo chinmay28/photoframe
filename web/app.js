@@ -447,7 +447,7 @@ function SourcesView(el) {
         <button class="btn primary" data-add>${icons.plus}Add source</button>
         <label class="btn${uploadSrc ? '' : ' disabled'}" ${uploadSrc ? '' : 'aria-disabled="true"'}>
           ${icons.upload}Upload photos
-          <input type="file" class="sr-only" multiple accept="image/jpeg,image/png,image/gif,image/webp" data-upload="${esc(uploadSrc?.id || '')}" ${uploadSrc ? '' : 'disabled'}>
+          <input type="file" class="sr-only" multiple accept="image/jpeg,image/png,image/gif,image/webp,image/heic,image/heif,.heic,.heif" data-upload="${esc(uploadSrc?.id || '')}" ${uploadSrc ? '' : 'disabled'}>
         </label>
       </div>
       ${upload ? `<section class="card"><div class="row"><h2>Uploading</h2><span class="hint">${upload.done} of ${upload.total}</span></div>
