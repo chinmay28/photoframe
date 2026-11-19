@@ -11,6 +11,24 @@ the section as the release notes. To cut a release, add the section in the
 commit that will be that version. With squash merges, that is the merge
 commit: one more than `main`'s current count.
 
+## v2026.11.13
+
+**Downloads:** `photoframe-v2026.11.13-linux-arm64.tar.gz` and
+`-linux-armv7.tar.gz` (the frame), and **`photoframe.apk`**, the Android app,
+always at
+<https://github.com/chinmay28/photoframe/releases/latest/download/photoframe.apk>.
+All are in `SHA256SUMS`.
+
+### HEIC photos on the frame
+
+Uploads, folders and image URLs now accept HEIC/HEIF (`.heic`, `.heif`), the
+format iPhones and many Android cameras save. They are shown upright and dated
+by when they were taken. Decoding is pure Go, so there is still nothing to
+install on the Pi; building from source now needs Go 1.26.4, which
+`quickstart.sh` installs. Large HEIC and PNG photos also downscale about twice
+as fast. The web app's upload picker offers HEIC, and the Android app's
+share target accepts it too.
+
 ## v2026.11.11
 
 - **Photoframe for Android.** Download `photoframe.apk` from this release, or
