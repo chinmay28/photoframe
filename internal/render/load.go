@@ -5,14 +5,11 @@ import (
 	"fmt"
 	"image"
 	"image/draw"
-	_ "image/gif" // register decoders
-	_ "image/jpeg"
-	_ "image/png"
 	"os"
 
+	"github.com/chinmay28/photoframe/internal/imagefmt"
 	"github.com/rwcarlsen/goexif/exif"
 	xdraw "golang.org/x/image/draw"
-	_ "golang.org/x/image/webp"
 )
 
 // Load reads an image file, applies its EXIF orientation, and downsamples it
@@ -28,11 +25,16 @@ func Load(path string, maxSide int) (*image.RGBA, error) {
 
 // Decode is Load for an in-memory encoded image.
 func Decode(b []byte, maxSide int) (*image.RGBA, error) {
-	src, _, err := image.Decode(bytes.NewReader(b))
+	src, format, err := imagefmt.Decode(b)
 	if err != nil {
 		return nil, fmt.Errorf("decode image: %w", err)
 	}
 	img := downscale(src, maxSide)
+	if format == imagefmt.HEIF {
+		// Already upright: phones record the rotation in the file's irot box
+		// and again as EXIF orientation, and the decoder applied the first.
+		return img, nil
+	}
 	return orient(img, exifOrientation(b)), nil
 }
 
@@ -57,9 +59,10 @@ func exifOrientation(b []byte) int {
 //
 // Photos are usually many times larger than needed, and a quality scaler's
 // cost grows with the source, not the result: on a Pi Zero it took several
-// seconds per photo. So JPEGs are first box-averaged by a whole factor
-// (shrinkYCbCr), which is both fast and a proper anti-aliasing filter, and
-// only the remaining step of less than 2× goes through interpolation.
+// seconds per photo. So photos are first box-averaged by a whole factor
+// (shrinkYCbCr for JPEGs, shrinkPixels for HEIC, PNG and the like), which is
+// both fast and a proper anti-aliasing filter, and only the remaining step
+// of less than 2× goes through interpolation.
 func downscale(src image.Image, maxSide int) *image.RGBA {
 	b := src.Bounds()
 	w, h := b.Dx(), b.Dy()
@@ -75,10 +78,13 @@ func downscale(src image.Image, maxSide int) *image.RGBA {
 	} else {
 		w, h = max(1, w*maxSide/h), maxSide
 	}
+	f := shrinkFactor(b.Dx(), b.Dy(), maxSide)
 	if y, ok := src.(*image.YCbCr); ok {
-		if small, ok := shrinkYCbCr(y, shrinkFactor(b.Dx(), b.Dy(), maxSide)); ok {
+		if small, ok := shrinkYCbCr(y, f); ok {
 			src, b = small, small.Bounds()
 		}
+	} else if small, ok := shrinkPixels(src, f); ok {
+		src, b = small, small.Bounds()
 	}
 	scaler := xdraw.Scaler(xdraw.BiLinear)
 	if max(b.Dx(), b.Dy()) < 2*maxSide {

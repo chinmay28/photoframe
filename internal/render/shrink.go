@@ -100,3 +100,67 @@ func shrinkChroma(dst []uint8, dstStride, w, h int, src []uint8, srcStride, cw, 
 		}
 	}
 }
+
+// shrinkPixels is shrinkYCbCr for the four-bytes-a-pixel images that decoders
+// other than JPEG return, HEIC's among them: it box-averages an *image.RGBA or
+// *image.NRGBA by a whole factor f, keeping its type. NRGBA channels are
+// averaged as stored, which is exact for the opaque pixels of a photo. It
+// reports false, doing nothing, for other types, for factors below 2 and for
+// images smaller than f on a side.
+func shrinkPixels(src image.Image, f int) (image.Image, bool) {
+	var pix []uint8
+	var stride int
+	b := src.Bounds()
+	switch s := src.(type) {
+	case *image.RGBA:
+		pix, stride = s.Pix[s.PixOffset(b.Min.X, b.Min.Y):], s.Stride
+	case *image.NRGBA:
+		pix, stride = s.Pix[s.PixOffset(b.Min.X, b.Min.Y):], s.Stride
+	default:
+		return nil, false
+	}
+	w, h := b.Dx()/f, b.Dy()/f
+	if f < 2 || w < 1 || h < 1 {
+		return nil, false
+	}
+	r := image.Rect(0, 0, w, h)
+	var dst []uint8
+	var out image.Image
+	if _, ok := src.(*image.RGBA); ok {
+		d := image.NewRGBA(r)
+		dst, out = d.Pix, d
+	} else {
+		d := image.NewNRGBA(r)
+		dst, out = d.Pix, d
+	}
+	shrinkInterleaved(dst, 4*w, w, h, pix, stride, f)
+	return out, true
+}
+
+// shrinkInterleaved writes the mean of each f×f block of src, a plane of
+// four interleaved channels, into dst (w×h pixels), channel by channel.
+func shrinkInterleaved(dst []uint8, dstStride, w, h int, src []uint8, srcStride, f int) {
+	sums := make([]uint32, 4*w)
+	n := uint32(f * f)
+	for y := 0; y < h; y++ {
+		clear(sums)
+		for j := 0; j < f; j++ {
+			row := src[(y*f+j)*srcStride:]
+			row = row[:4*w*f]
+			for x := 0; x < w; x++ {
+				s := sums[4*x : 4*x+4 : 4*x+4]
+				block := row[4*x*f : 4*(x+1)*f]
+				for k := 0; k < len(block); k += 4 {
+					s[0] += uint32(block[k])
+					s[1] += uint32(block[k+1])
+					s[2] += uint32(block[k+2])
+					s[3] += uint32(block[k+3])
+				}
+			}
+		}
+		out := dst[y*dstStride : y*dstStride+4*w]
+		for i, s := range sums {
+			out[i] = uint8((s + n/2) / n)
+		}
+	}
+}

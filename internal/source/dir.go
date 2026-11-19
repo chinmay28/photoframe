@@ -3,23 +3,23 @@
 package source
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/chinmay28/photoframe/internal/imagefmt"
 	"github.com/chinmay28/photoframe/internal/library"
 	"github.com/rwcarlsen/goexif/exif"
 )
 
-// imageExts are the file types the renderer can decode.
-var imageExts = map[string]bool{".jpg": true, ".jpeg": true, ".png": true, ".gif": true, ".webp": true}
-
 // IsImageName reports whether name has a supported image extension.
-func IsImageName(name string) bool { return imageExts[strings.ToLower(filepath.Ext(name))] }
+func IsImageName(name string) bool { return imagefmt.IsImageName(name) }
 
 // Dir lists images under Root recursively. Hidden files and directories are
 // skipped. Photos in sub-folders are titled with the folder name.
@@ -108,7 +108,7 @@ func ExifDate(path string) time.Time {
 		return time.Time{}
 	}
 	defer f.Close()
-	x, err := exif.Decode(f)
+	x, err := exif.Decode(exifStream(f))
 	if err != nil {
 		return time.Time{}
 	}
@@ -117,6 +117,25 @@ func ExifDate(path string) time.Time {
 		return time.Time{}
 	}
 	return t
+}
+
+// exifStream returns what to hand the EXIF reader for the file f: f itself
+// for JPEG and the like, or the EXIF block of a HEIF file, which the reader
+// cannot find by itself.
+func exifStream(f io.ReadSeeker) io.Reader {
+	head := make([]byte, 12)
+	n, _ := io.ReadFull(f, head)
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return bytes.NewReader(nil)
+	}
+	if !imagefmt.IsHEIF(head[:n]) {
+		return f
+	}
+	tiff, err := imagefmt.HEIFExif(f)
+	if err != nil {
+		return bytes.NewReader(nil)
+	}
+	return bytes.NewReader(tiff)
 }
 
 func folderTitle(rel string) string {

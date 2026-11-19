@@ -19,6 +19,7 @@ import (
 
 	"github.com/chinmay28/photoframe/internal/adjust"
 	"github.com/chinmay28/photoframe/internal/config"
+	"github.com/chinmay28/photoframe/internal/imagefmt/heictest"
 	"github.com/chinmay28/photoframe/internal/library"
 	"github.com/chinmay28/photoframe/internal/player"
 	"github.com/chinmay28/photoframe/internal/sysinfo"
@@ -317,6 +318,27 @@ func TestUpload(t *testing.T) {
 	defer resp2.Body.Close()
 	if res := decode[UploadResult](t, resp2); len(res.Saved) != 1 || res.Saved[0] != "Beach Day-2.png" {
 		t.Fatalf("second upload = %+v", res)
+	}
+}
+
+func TestUploadHEIC(t *testing.T) {
+	e := newEnv(t)
+	heic := heictest.Encode(t, heictest.Gradient(64, 48), nil)
+	body, ct := uploadBody(t, map[string][]byte{
+		"IMG_0042.HEIC": heic,
+		"fake.heic":     []byte("not really"),
+	})
+	resp, err := http.Post(e.srv.URL+"/api/sources/uploads/photos", ct, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	res := decode[UploadResult](t, resp)
+	if len(res.Saved) != 1 || res.Saved[0] != "IMG_0042.heic" || len(res.Rejected) != 1 {
+		t.Fatalf("result = %+v", res)
+	}
+	if _, err := os.Stat(filepath.Join(e.data, "uploads", "uploads", "IMG_0042.heic")); err != nil {
+		t.Fatal("HEIC not stored in the upload folder")
 	}
 }
 

@@ -8,8 +8,9 @@ import java.util.Locale
  *
  * A page may write extensions as well as types (".jpg,image/png"), and a
  * picker handed ".jpg" as a type offers nothing at all. The frame's upload
- * button asks for "image/jpeg,image/png,image/gif,image/webp", which passes
- * through as four types. Extensions are looked up; one with no known type
+ * button asks for six image types, HEIC's included, plus ".heic,.heif" for
+ * desktop browsers that don't know HEIC's type; on Android those look up
+ * to types already listed. Extensions are looked up; one with no known type
  * (".raw") cannot be said to the picker, so the answer is then "anything",
  * and the page checks what it is given, as it does in a browser.
  */
