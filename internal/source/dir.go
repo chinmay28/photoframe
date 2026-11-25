@@ -21,8 +21,18 @@ import (
 // IsImageName reports whether name has a supported image extension.
 func IsImageName(name string) bool { return imagefmt.IsImageName(name) }
 
+// PhotoMode is the permission a Dir gives every photo it lists: the owner may
+// write, everyone may read.
+const PhotoMode fs.FileMode = 0o644
+
 // Dir lists images under Root recursively. Hidden files and directories are
 // skipped. Photos in sub-folders are titled with the folder name.
+//
+// Each Sync also takes the photos it lists as its own: it gives them, and the
+// sub-folders they are in, to the user and group the process runs as, and sets
+// the photos to PhotoMode. So a photo added to the folder by any means, by any
+// user, is the frame's, and readable by everyone, from the next sync on. Root itself is
+// left as it is. See protect for what happens when that isn't permitted.
 type Dir struct {
 	SourceID string
 	Root     string
@@ -61,13 +71,20 @@ func (d *Dir) Sync(ctx context.Context) ([]library.Photo, error) {
 			}
 			return nil
 		}
-		if e.IsDir() || !IsImageName(e.Name()) {
+		if e.IsDir() {
+			if info, err := e.Info(); err == nil && path != d.Root {
+				takeOwnership(path, info)
+			}
+			return nil
+		}
+		if !IsImageName(e.Name()) {
 			return nil
 		}
 		info, err := e.Info()
 		if err != nil {
 			return nil
 		}
+		info = protect(path, info)
 		rel, _ := filepath.Rel(d.Root, path)
 		seen[path] = true
 		photos = append(photos, library.Photo{
@@ -86,6 +103,39 @@ func (d *Dir) Sync(ctx context.Context) ([]library.Photo, error) {
 		}
 	}
 	return photos, err
+}
+
+// protect makes the regular file at path the process's own and sets it to
+// PhotoMode, changing only what differs, and returns its file info
+// afterwards. It is best effort: where a change isn't permitted (taking a
+// file from another user needs root or CAP_CHOWN; a share may be read-only)
+// the photo is left as it is, and it is still shown. Symlinks are left alone,
+// since changing one would change a file outside the folder.
+func protect(path string, info fs.FileInfo) fs.FileInfo {
+	if !info.Mode().IsRegular() {
+		return info
+	}
+	changed := takeOwnership(path, info)
+	if info.Mode().Perm() != PhotoMode && os.Chmod(path, PhotoMode) == nil {
+		changed = true
+	}
+	if changed {
+		if after, err := os.Lstat(path); err == nil {
+			return after
+		}
+	}
+	return info
+}
+
+// takeOwnership gives the file or directory at path to the user and group the
+// process runs as, and reports whether it changed anything. It never follows
+// a symlink.
+func takeOwnership(path string, info fs.FileInfo) bool {
+	uid, gid, ok := owner(info)
+	if !ok || (uid == os.Geteuid() && gid == os.Getegid()) {
+		return false
+	}
+	return os.Lchown(path, os.Geteuid(), os.Getegid()) == nil
 }
 
 func (d *Dir) takenAt(path string, info fs.FileInfo) time.Time {

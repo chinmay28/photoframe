@@ -31,7 +31,8 @@
 #
 # Either way the bundle is installed by deploy/install.sh, the same script
 # `make deploy` uses: binary in /usr/local/bin, a `photoframe` system user,
-# SPI enabled in config.txt, and photoframe.service enabled.
+# SPI enabled in config.txt, photoframe.service enabled, and the photos
+# folder (PHOTOFRAME_PHOTOS_DIR) given to that user.
 #
 # Safe to re-run:
 #
@@ -52,6 +53,10 @@
 #   PHOTOFRAME_GITHUB    owner/name on GitHub         (default: chinmay28/photoframe)
 #   PHOTOFRAME_REF       branch, tag or commit to build in source mode (default: main)
 #   PHOTOFRAME_HOSTNAME  set the Pi's hostname, so the app is at http://<name>.local
+#   PHOTOFRAME_PHOTOS_DIR  folder for photos you copy onto the Pi yourself
+#                        (default: /var/photoframe, or the one set before).
+#                        Created if missing; it and everything in it is given
+#                        to the photoframe user, and the service may write there
 #   PHOTOFRAME_FORCE     1: reinstall even if this version is already running
 #   PHOTOFRAME_PURGE     1: with --uninstall, also delete /var/lib/photoframe
 #                        (uploaded photos and settings) and the service user
@@ -126,6 +131,10 @@ if [ "$UNINSTALL" = 1 ]; then
   log "Removing photoframe"
   systemctl disable --now photoframe.service 2>/dev/null || :
   rm -f "$UNIT" "$BIN"
+  # install.sh's note of a photos folder other than /var/photoframe. The
+  # folder and its photos stay.
+  rm -f "$UNIT.d/photos-dir.conf"
+  rmdir "$UNIT.d" 2>/dev/null || :
   rm -rf "$STATE_DIR" /var/cache/photoframe-build
   systemctl daemon-reload
   # The mDNS announcement install.sh wrote for the Android app.
@@ -209,6 +218,10 @@ up_to_date() {
   [ "$1" = "$(installed_version)" ] || return 0
   if [ "${PHOTOFRAME_FORCE:-0}" = 1 ]; then
     log "Reinstalling $1 (PHOTOFRAME_FORCE=1)"
+    return 0
+  fi
+  if [ -n "${PHOTOFRAME_PHOTOS_DIR:-}" ]; then
+    log "Reinstalling $1 to set the photos folder (PHOTOFRAME_PHOTOS_DIR)"
     return 0
   fi
   if answers "$1"; then
@@ -506,7 +519,8 @@ else
   log "Installing $NEW_VERSION"
 fi
 
-if ! (cd "$BUNDLE" && ./install.sh --binary ./photoframe ${PHOTOFRAME_HOSTNAME:+--hostname "$PHOTOFRAME_HOSTNAME"}) 2>&1 | tee -a "$LOG"; then
+if ! (cd "$BUNDLE" && ./install.sh --binary ./photoframe ${PHOTOFRAME_HOSTNAME:+--hostname "$PHOTOFRAME_HOSTNAME"} \
+    ${PHOTOFRAME_PHOTOS_DIR:+--photos-dir "$PHOTOFRAME_PHOTOS_DIR"}) 2>&1 | tee -a "$LOG"; then
   die "install.sh failed"
 fi
 
