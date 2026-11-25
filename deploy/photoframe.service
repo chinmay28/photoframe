@@ -19,6 +19,13 @@ ExecStart=/usr/local/bin/photoframe -data /var/lib/photoframe -listen :80
 Environment=GOMEMLIMIT=256MiB
 StateDirectory=photoframe
 StateDirectoryMode=0750
+# Everything outside the state directory is read-only to the service (see
+# ProtectSystem below). /var/photoframe is the one folder for photos you copy
+# onto the Pi yourself that it may also write to, so it can set their mode
+# and owner at each sync. The "-" lets the service start when the folder
+# doesn't exist. For a folder elsewhere, add a drop-in with its own
+# ReadWritePaths= (systemctl edit photoframe).
+ReadWritePaths=-/var/photoframe
 # Listen on port 80 without running as root.
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE

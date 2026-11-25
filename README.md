@@ -157,6 +157,21 @@ as they are saved, and anything else found in the folder, however it got
 there, at the next sync. Only image files and the sub-folders they are in
 are changed; a photo that can't be changed is shown as it is.
 
+The service can only write to its own data in `/var/lib/photoframe` and to
+`/var/photoframe`, so those are where this happens. To keep your own photos
+on the Pi, make that folder once and add it as a folder source:
+
+```sh
+sudo install -d -o photoframe -g photoframe /var/photoframe
+```
+
+A folder anywhere else is still shown, but read-only to the service; give it
+write access with `sudo systemctl edit photoframe` and a
+`ReadWritePaths=/your/folder` line under `[Service]`. The service takes
+ownership only of files it is allowed to, so copy photos in as `photoframe`
+(`sudo -u photoframe cp …`) or hand existing ones over with
+`sudo chown -R photoframe:photoframe /var/photoframe`.
+
 Sources sync at startup, every 15 minutes (`-sync-interval`), and on demand
 from the app. If a remote source can't be reached, its cached photos stay in
 rotation.
