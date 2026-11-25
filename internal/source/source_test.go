@@ -274,7 +274,7 @@ func mode(t *testing.T, path string) os.FileMode {
 	return st.Mode().Perm()
 }
 
-func TestDirMakesPhotosReadOnly(t *testing.T) {
+func TestDirSetsPhotoMode(t *testing.T) {
 	root := t.TempDir()
 	img := pngBytes(t)
 	first := filepath.Join(root, "a.jpg")
@@ -285,6 +285,11 @@ func TestDirMakesPhotosReadOnly(t *testing.T) {
 	write(t, nested, img)
 	write(t, notes, []byte("x"))
 	write(t, hidden, img)
+	for _, p := range []string{first, nested, notes, hidden} {
+		if err := os.Chmod(p, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	d := &Dir{SourceID: "up", Root: root}
 	if _, err := d.Sync(context.Background()); err != nil {
@@ -297,14 +302,17 @@ func TestDirMakesPhotosReadOnly(t *testing.T) {
 	}
 	// Only the photos the source lists are touched.
 	for _, p := range []string{notes, hidden} {
-		if got := mode(t, p); got != 0o644 {
-			t.Errorf("%s: mode %v, want it left at 0644", p, got)
+		if got := mode(t, p); got != 0o600 {
+			t.Errorf("%s: mode %v, want it left at 0600", p, got)
 		}
 	}
 
-	// A photo that turns up later is read-only from the next sync.
+	// A photo that turns up later gets the mode at the next sync.
 	added := filepath.Join(root, "c.jpg")
 	write(t, added, img)
+	if err := os.Chmod(added, 0o400); err != nil {
+		t.Fatal(err)
+	}
 	photos, err := d.Sync(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -321,6 +329,9 @@ func TestDirLeavesSymlinkTargetsAlone(t *testing.T) {
 	root := t.TempDir()
 	outside := filepath.Join(t.TempDir(), "real.jpg")
 	write(t, outside, pngBytes(t))
+	if err := os.Chmod(outside, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Symlink(outside, filepath.Join(root, "link.jpg")); err != nil {
 		t.Skip("no symlinks here:", err)
 	}
@@ -328,7 +339,64 @@ func TestDirLeavesSymlinkTargetsAlone(t *testing.T) {
 	if err != nil || len(photos) != 1 {
 		t.Fatalf("photos %+v, err %v", photos, err)
 	}
-	if got := mode(t, outside); got != 0o644 {
-		t.Errorf("symlink target: mode %v, want it left at 0644", got)
+	if got := mode(t, outside); got != 0o600 {
+		t.Errorf("symlink target: mode %v, want it left at 0600", got)
+	}
+}
+
+func TestDirTakesOwnershipOfPhotos(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("giving a file to another user needs root")
+	}
+	const other = 4242
+	root := t.TempDir()
+	img := pngBytes(t)
+	photo := filepath.Join(root, "Emerald Bay", "b.png")
+	notes := filepath.Join(root, "notes.txt")
+	outside := filepath.Join(t.TempDir(), "real.jpg")
+	link := filepath.Join(root, "link.jpg")
+	write(t, photo, img)
+	write(t, notes, []byte("x"))
+	write(t, outside, img)
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(photo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{photo, filepath.Dir(photo), notes, outside, link, root} {
+		if err := os.Lchown(p, other, other); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err := (&Dir{SourceID: "up", Root: root}).Sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	ownedBy := func(path string) int {
+		t.Helper()
+		st, err := os.Lstat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		uid, gid, ok := owner(st)
+		if !ok || uid != gid {
+			t.Fatalf("%s: owner %d:%d, ok %v", path, uid, gid, ok)
+		}
+		return uid
+	}
+	for _, p := range []string{photo, filepath.Dir(photo)} {
+		if got := ownedBy(p); got != os.Geteuid() {
+			t.Errorf("%s: owned by %d, want %d", p, got, os.Geteuid())
+		}
+	}
+	if got := mode(t, photo); got != PhotoMode {
+		t.Errorf("%s: mode %v, want %v", photo, got, PhotoMode)
+	}
+	// Nothing but listed photos and their sub-folders changes hands.
+	for _, p := range []string{notes, outside, link, root} {
+		if got := ownedBy(p); got != other {
+			t.Errorf("%s: owned by %d, want it left with %d", p, got, other)
+		}
 	}
 }
