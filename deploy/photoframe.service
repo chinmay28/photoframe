@@ -20,11 +20,11 @@ Environment=GOMEMLIMIT=256MiB
 StateDirectory=photoframe
 StateDirectoryMode=0750
 # Everything outside the state directory is read-only to the service (see
-# ProtectSystem below). /var/photoframe is the one folder for photos you copy
-# onto the Pi yourself that it may also write to, so it can set their mode
-# and owner at each sync. The "-" lets the service start when the folder
-# doesn't exist. For a folder elsewhere, add a drop-in with its own
-# ReadWritePaths= (systemctl edit photoframe).
+# ProtectSystem below). /var/photoframe is the folder for photos you copy
+# onto the Pi yourself; the service may write there too, so it can set their
+# mode and owner at each sync. The "-" lets the service start when the folder
+# doesn't exist. install.sh --photos-dir (PHOTOFRAME_PHOTOS_DIR for
+# quickstart.sh) picks another folder and writes a drop-in for it.
 ReadWritePaths=-/var/photoframe
 # Listen on port 80 without running as root, and take ownership of photos
 # that another user copied into a photo folder.
