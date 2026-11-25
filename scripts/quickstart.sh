@@ -56,7 +56,7 @@
 #   PHOTOFRAME_REF       branch, tag or commit to build in source mode (default: main)
 #   PHOTOFRAME_HOSTNAME  set the Pi's hostname, so the app is at http://<name>.local
 #   PHOTOFRAME_PHOTOS_DIR  folder for photos you copy onto the Pi yourself
-#                        (default: /var/photoframe, or the one set before).
+#                        (default: /var/pictures, or the one set before).
 #                        Created if missing; it and everything in it is given
 #                        to the photoframe user, and the service and every
 #                        user may write there
@@ -134,7 +134,7 @@ if [ "$UNINSTALL" = 1 ]; then
   log "Removing photoframe"
   systemctl disable --now photoframe.service 2>/dev/null || :
   rm -f "$UNIT" "$BIN"
-  # install.sh's note of a photos folder other than /var/photoframe. The
+  # install.sh's note of a photos folder other than /var/pictures. The
   # folder and its photos stay.
   rm -f "$UNIT.d/photos-dir.conf"
   rmdir "$UNIT.d" 2>/dev/null || :
@@ -220,7 +220,7 @@ answers() {
 photos_dir() {
   local d=""
   [ -f "$UNIT.d/photos-dir.conf" ] && d="$(sed -n 's/^ReadWritePaths=-\{0,1\}//p' "$UNIT.d/photos-dir.conf" | head -n1)"
-  echo "${d:-/var/photoframe}"
+  echo "${d:-/var/pictures}"
 }
 
 # repair_photos hands the photos folder and everything in it to the service

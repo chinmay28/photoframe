@@ -83,7 +83,7 @@ Options are environment variables, set after `sudo`:
 | `PHOTOFRAME_REF` | branch, tag or commit to build in source mode (default `main`) |
 | `PHOTOFRAME_BUNDLE` | a release `.tar.gz` already on the Pi, installed without going online |
 | `PHOTOFRAME_HOSTNAME` | set the Pi's hostname, so the app is at `http://<name>.local` |
-| `PHOTOFRAME_PHOTOS_DIR` | folder for photos you copy onto the Pi yourself (default `/var/photoframe`, or the one set before); see [Photo sources](#photo-sources) |
+| `PHOTOFRAME_PHOTOS_DIR` | folder for photos you copy onto the Pi yourself (default `/var/pictures`, or the one set before); see [Photo sources](#photo-sources) |
 | `PHOTOFRAME_FORCE=1` | reinstall even if that version is already running |
 | `PHOTOFRAME_PURGE=1` | with `--uninstall`, also delete `/var/lib/photoframe` and the service user |
 
@@ -109,7 +109,7 @@ prints is also logged to `/var/log/photoframe-quickstart.log`.
    - adds `dtparam=spi=on` and `dtoverlay=spi0-0cs` to `config.txt` if they
      are missing. The driver drives chip-select itself on GPIO 8, as
      Pimoroni's library does.
-   - creates the photos folder, `/var/photoframe` unless `--photos-dir`
+   - creates the photos folder, `/var/pictures` unless `--photos-dir`
      names another, gives it to that user and opens it to everyone
    - installs and enables `photoframe.service`
    - announces the app over mDNS (`_photoframe._tcp`, an Avahi service file),
@@ -162,10 +162,10 @@ changed is shown as it is. One the service may not even read is left out,
 and the source's line under *Sources* says how many and why.
 
 For photos you copy onto the Pi yourself, the installer makes
-`/var/photoframe`: add it in the app as a folder source. It is open to
+`/var/pictures`: add it in the app as a folder source. It is open to
 every user on the Pi (mode `777`, sub-folders included), so photos can be
 copied in, replaced and removed without `sudo`, for example
-`scp *.jpg pi@photoframe.local:/var/photoframe/`. Every install or upgrade
+`scp *.jpg pi@photoframe.local:/var/pictures/`. Every install or upgrade
 gives the folder and everything in it to the `photoframe` user
 (`chown -R photoframe:photoframe`), and the service may write there, so each
 sync also takes over photos copied in since, whoever copied them. Running
