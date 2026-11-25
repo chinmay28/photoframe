@@ -21,8 +21,15 @@ import (
 // IsImageName reports whether name has a supported image extension.
 func IsImageName(name string) bool { return imagefmt.IsImageName(name) }
 
+// PhotoMode is the permission a Dir gives every photo it lists: read-only for
+// everyone, so nothing rewrites a photo in place. Deleting a photo is decided
+// by its folder's permissions and still works.
+const PhotoMode fs.FileMode = 0o444
+
 // Dir lists images under Root recursively. Hidden files and directories are
-// skipped. Photos in sub-folders are titled with the folder name.
+// skipped. Photos in sub-folders are titled with the folder name. Each Sync
+// sets the photos it lists to PhotoMode, so a photo added to the folder by
+// any means is read-only from the next sync on.
 type Dir struct {
 	SourceID string
 	Root     string
@@ -68,6 +75,7 @@ func (d *Dir) Sync(ctx context.Context) ([]library.Photo, error) {
 		if err != nil {
 			return nil
 		}
+		info = protect(path, info)
 		rel, _ := filepath.Rel(d.Root, path)
 		seen[path] = true
 		photos = append(photos, library.Photo{
@@ -86,6 +94,24 @@ func (d *Dir) Sync(ctx context.Context) ([]library.Photo, error) {
 		}
 	}
 	return photos, err
+}
+
+// protect sets the regular file at path to PhotoMode if it has any other
+// permission, and returns its file info afterwards. It is best effort: on a
+// file the frame doesn't own or a read-only share the photo is left as it is,
+// and it is still shown. Symlinks are left alone, since changing one would
+// change a file outside the folder.
+func protect(path string, info fs.FileInfo) fs.FileInfo {
+	if !info.Mode().IsRegular() || info.Mode().Perm() == PhotoMode {
+		return info
+	}
+	if err := os.Chmod(path, PhotoMode); err != nil {
+		return info
+	}
+	if after, err := os.Lstat(path); err == nil {
+		return after
+	}
+	return info
 }
 
 func (d *Dir) takenAt(path string, info fs.FileInfo) time.Time {

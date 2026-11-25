@@ -264,3 +264,71 @@ func TestURLFileName(t *testing.T) {
 		}
 	}
 }
+
+func mode(t *testing.T, path string) os.FileMode {
+	t.Helper()
+	st, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return st.Mode().Perm()
+}
+
+func TestDirMakesPhotosReadOnly(t *testing.T) {
+	root := t.TempDir()
+	img := pngBytes(t)
+	first := filepath.Join(root, "a.jpg")
+	nested := filepath.Join(root, "Emerald Bay", "b.png")
+	notes := filepath.Join(root, "notes.txt")
+	hidden := filepath.Join(root, ".upload-123.jpg")
+	write(t, first, img)
+	write(t, nested, img)
+	write(t, notes, []byte("x"))
+	write(t, hidden, img)
+
+	d := &Dir{SourceID: "up", Root: root}
+	if _, err := d.Sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{first, nested} {
+		if got := mode(t, p); got != PhotoMode {
+			t.Errorf("%s: mode %v, want %v", p, got, PhotoMode)
+		}
+	}
+	// Only the photos the source lists are touched.
+	for _, p := range []string{notes, hidden} {
+		if got := mode(t, p); got != 0o644 {
+			t.Errorf("%s: mode %v, want it left at 0644", p, got)
+		}
+	}
+
+	// A photo that turns up later is read-only from the next sync.
+	added := filepath.Join(root, "c.jpg")
+	write(t, added, img)
+	photos, err := d.Sync(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(photos) != 3 {
+		t.Fatalf("got %d photos, want 3", len(photos))
+	}
+	if got := mode(t, added); got != PhotoMode {
+		t.Errorf("%s: mode %v, want %v", added, got, PhotoMode)
+	}
+}
+
+func TestDirLeavesSymlinkTargetsAlone(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "real.jpg")
+	write(t, outside, pngBytes(t))
+	if err := os.Symlink(outside, filepath.Join(root, "link.jpg")); err != nil {
+		t.Skip("no symlinks here:", err)
+	}
+	photos, err := (&Dir{SourceID: "up", Root: root}).Sync(context.Background())
+	if err != nil || len(photos) != 1 {
+		t.Fatalf("photos %+v, err %v", photos, err)
+	}
+	if got := mode(t, outside); got != 0o644 {
+		t.Errorf("symlink target: mode %v, want it left at 0644", got)
+	}
+}

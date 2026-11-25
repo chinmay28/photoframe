@@ -138,7 +138,7 @@ func saveUpload(dir, original string, r io.Reader) (string, error) {
 					return "", err
 				}
 			}
-			os.Chmod(target, 0o644)
+			os.Chmod(target, source.PhotoMode)
 			return name, nil
 		}
 		name = fmt.Sprintf("%s-%d%s", stem, i, ext)

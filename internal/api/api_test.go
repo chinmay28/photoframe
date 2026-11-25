@@ -22,6 +22,7 @@ import (
 	"github.com/chinmay28/photoframe/internal/imagefmt/heictest"
 	"github.com/chinmay28/photoframe/internal/library"
 	"github.com/chinmay28/photoframe/internal/player"
+	"github.com/chinmay28/photoframe/internal/source"
 	"github.com/chinmay28/photoframe/internal/sysinfo"
 )
 
@@ -302,8 +303,12 @@ func TestUpload(t *testing.T) {
 	if len(res.Saved) != 1 || res.Saved[0] != "Beach Day.png" || len(res.Rejected) != 2 {
 		t.Fatalf("result = %+v", res)
 	}
-	if _, err := os.Stat(filepath.Join(e.data, "uploads", "uploads", "Beach Day.png")); err != nil {
+	st, err := os.Stat(filepath.Join(e.data, "uploads", "uploads", "Beach Day.png"))
+	if err != nil {
 		t.Fatal("file not stored in the upload folder")
+	}
+	if st.Mode().Perm() != source.PhotoMode {
+		t.Fatalf("uploaded photo has mode %v, want %v", st.Mode().Perm(), source.PhotoMode)
 	}
 	if len(e.lib.synced) != 1 {
 		t.Fatal("library not rescanned after upload")

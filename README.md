@@ -151,6 +151,12 @@ starts its refresh. The Android app still converts HEIC to a smaller JPEG
 when you share. A HEIC photo is turned upright by the rotation stored in the
 file, and dated by its EXIF.
 
+Photos in upload and folder sources are made read-only (mode `444`): uploads
+as they are saved, and anything else found in the folder, however it got
+there, at the next sync. Only image files are changed, and only where the
+`photoframe` user is allowed to; other photos are shown as they are. Deleting
+an uploaded photo from the app still works.
+
 Sources sync at startup, every 15 minutes (`-sync-interval`), and on demand
 from the app. If a remote source can't be reached, its cached photos stay in
 rotation.
