@@ -28,11 +28,12 @@ const PhotoMode fs.FileMode = 0o644
 // Dir lists images under Root recursively. Hidden files and directories are
 // skipped. Photos in sub-folders are titled with the folder name.
 //
-// Each Sync also takes the photos it lists as its own: it gives them, and the
-// sub-folders they are in, to the user and group the process runs as, and sets
-// the photos to PhotoMode. So a photo added to the folder by any means, by any
-// user, is the frame's, and readable by everyone, from the next sync on. Root itself is
-// left as it is. See protect for what happens when that isn't permitted.
+// Each Sync also takes the photos it lists as its own: it gives them to the
+// user and group the process runs as, and sets them to PhotoMode. So a photo
+// added to the folder by any means, by any user, is the frame's, and readable
+// by everyone, from the next sync on. Folders are left as they are, so whoever
+// made one can keep adding to it. See protect for what happens when a change
+// isn't permitted.
 type Dir struct {
 	SourceID string
 	Root     string
@@ -71,13 +72,7 @@ func (d *Dir) Sync(ctx context.Context) ([]library.Photo, error) {
 			}
 			return nil
 		}
-		if e.IsDir() {
-			if info, err := e.Info(); err == nil && path != d.Root {
-				takeOwnership(path, info)
-			}
-			return nil
-		}
-		if !IsImageName(e.Name()) {
+		if e.IsDir() || !IsImageName(e.Name()) {
 			return nil
 		}
 		info, err := e.Info()
@@ -127,8 +122,8 @@ func protect(path string, info fs.FileInfo) fs.FileInfo {
 	return info
 }
 
-// takeOwnership gives the file or directory at path to the user and group the
-// process runs as, and reports whether it changed anything. It never follows
+// takeOwnership gives the file at path to the user and group the process
+// runs as, and reports whether it changed anything. It never follows
 // a symlink.
 func takeOwnership(path string, info fs.FileInfo) bool {
 	uid, gid, ok := owner(info)

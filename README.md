@@ -110,7 +110,7 @@ prints is also logged to `/var/log/photoframe-quickstart.log`.
      are missing. The driver drives chip-select itself on GPIO 8, as
      Pimoroni's library does.
    - creates the photos folder, `/var/photoframe` unless `--photos-dir`
-     names another, and gives it to that user
+     names another, gives it to that user and opens it to everyone
    - installs and enables `photoframe.service`
    - announces the app over mDNS (`_photoframe._tcp`, an Avahi service file),
      so the Android app can find the frame
@@ -157,15 +157,17 @@ file, and dated by its EXIF.
 Photos in upload and folder sources are given mode `644` and, where the
 service is allowed to, handed to the user it runs as (`photoframe`): uploads
 as they are saved, and anything else found in the folder, however it got
-there, at the next sync. Only image files and the sub-folders they are in
-are changed; a photo that can't be changed is shown as it is.
+there, at the next sync. Only image files are changed; a photo that can't be
+changed is shown as it is.
 
 For photos you copy onto the Pi yourself, the installer makes
-`/var/photoframe`: add it in the app as a folder source. Every install or
-upgrade gives the folder and everything in it to the `photoframe` user
+`/var/photoframe`: add it in the app as a folder source. It is open to
+every user on the Pi (mode `777`, sub-folders included), so photos can be
+copied in, replaced and removed without `sudo`, for example
+`scp *.jpg pi@photoframe.local:/var/photoframe/`. Every install or upgrade
+gives the folder and everything in it to the `photoframe` user
 (`chown -R photoframe:photoframe`), and the service may write there, so each
-sync also takes over photos copied in since, whoever copied them (`sudo cp`,
-`scp` as another user). To use another folder, name it once; later runs
+sync also takes over photos copied in since, whoever copied them. To use another folder, name it once; later runs
 keep it:
 
 ```sh

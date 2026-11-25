@@ -8,8 +8,9 @@
 #
 # --photos-dir is the folder for photos you copy onto the Pi yourself. It is
 # created if missing, given with everything in it to the photoframe user, and
-# made writable to the service. Without the option, the folder chosen by an
-# earlier run is kept; the first time, it is /var/photoframe.
+# made writable to the service and, with its sub-folders, to every user.
+# Without the option, the folder chosen by an earlier run is kept; the first
+# time, it is /var/photoframe.
 #
 # Safe to re-run: it only changes what is missing.
 set -euo pipefail
@@ -26,7 +27,7 @@ while [[ $# -gt 0 ]]; do
     --binary) BIN="$2"; shift 2 ;;
     --hostname) NEW_HOSTNAME="$2"; shift 2 ;;
     --photos-dir) PHOTOS_DIR="$2"; shift 2 ;;
-    -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -71,6 +72,10 @@ echo "==> Photos folder $PHOTOS_DIR"
 mkdir -p "$PHOTOS_DIR"
 # -h: a symlink in the folder changes hands itself, not the file it points to.
 chown -hR photoframe:photoframe "$PHOTOS_DIR"
+# Open to everyone, so any user can copy photos in (scp, rsync, cp) without
+# sudo, and replace or remove them later even though each sync makes the
+# photos the service's own. Sub-folders too, as they were just handed over.
+find "$PHOTOS_DIR" -type d -exec chmod 0777 {} +
 if [[ $PHOTOS_DIR == "$DEFAULT_PHOTOS_DIR" ]]; then
   rm -f "$PHOTOS_DROPIN"
   rmdir "$(dirname "$PHOTOS_DROPIN")" 2>/dev/null || true

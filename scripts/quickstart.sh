@@ -56,7 +56,8 @@
 #   PHOTOFRAME_PHOTOS_DIR  folder for photos you copy onto the Pi yourself
 #                        (default: /var/photoframe, or the one set before).
 #                        Created if missing; it and everything in it is given
-#                        to the photoframe user, and the service may write there
+#                        to the photoframe user, and the service and every
+#                        user may write there
 #   PHOTOFRAME_FORCE     1: reinstall even if this version is already running
 #   PHOTOFRAME_PURGE     1: with --uninstall, also delete /var/lib/photoframe
 #                        (uploaded photos and settings) and the service user
