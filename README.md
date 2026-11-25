@@ -167,10 +167,12 @@ sudo install -d -o photoframe -g photoframe /var/photoframe
 
 A folder anywhere else is still shown, but read-only to the service; give it
 write access with `sudo systemctl edit photoframe` and a
-`ReadWritePaths=/your/folder` line under `[Service]`. The service takes
-ownership only of files it is allowed to, so copy photos in as `photoframe`
-(`sudo -u photoframe cp …`) or hand existing ones over with
-`sudo chown -R photoframe:photoframe /var/photoframe`.
+`ReadWritePaths=/your/folder` line under `[Service]`.
+
+In those folders the service takes ownership of photos whoever copied them
+in (`sudo cp`, `scp` as another user), which is why its unit has
+`CAP_CHOWN`. To keep that from reaching anything else, the unit lets the
+service open no devices except the panel's SPI and GPIO.
 
 Sources sync at startup, every 15 minutes (`-sync-interval`), and on demand
 from the app. If a remote source can't be reached, its cached photos stay in

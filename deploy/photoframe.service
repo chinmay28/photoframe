@@ -26,9 +26,17 @@ StateDirectoryMode=0750
 # doesn't exist. For a folder elsewhere, add a drop-in with its own
 # ReadWritePaths= (systemctl edit photoframe).
 ReadWritePaths=-/var/photoframe
-# Listen on port 80 without running as root.
-AmbientCapabilities=CAP_NET_BIND_SERVICE
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+# Listen on port 80 without running as root, and take ownership of photos
+# that another user copied into a photo folder.
+AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_CHOWN
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_CHOWN
+# CAP_CHOWN reaches every file the service can write to, and /dev is one such
+# place. So the only devices it may open are the panel's: SPI and GPIO (the
+# names are those in /proc/devices), plus the harmless ones every service
+# gets, such as /dev/null and /dev/urandom.
+DevicePolicy=closed
+DeviceAllow=char-spi rw
+DeviceAllow=char-gpiochip rw
 Restart=always
 RestartSec=5
 # The panel refresh can take ~40 s; let it finish and power down cleanly.
