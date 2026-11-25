@@ -4,13 +4,13 @@
 # and photoframe.service:
 #
 #   sudo ./install.sh [--binary ./photoframe-linux-arm64] [--hostname photoframe]
-#                     [--photos-dir /var/photoframe]
+#                     [--photos-dir /var/pictures]
 #
 # --photos-dir is the folder for photos you copy onto the Pi yourself. It is
 # created if missing, given with everything in it to the photoframe user, and
 # made writable to the service and, with its sub-folders, to every user.
 # Without the option, the folder chosen by an earlier run is kept; the first
-# time, it is /var/photoframe.
+# time, it is /var/pictures.
 #
 # Safe to re-run: it only changes what is missing.
 set -euo pipefail
@@ -18,7 +18,7 @@ set -euo pipefail
 BIN="./photoframe"
 NEW_HOSTNAME=""
 PHOTOS_DIR=""
-DEFAULT_PHOTOS_DIR=/var/photoframe
+DEFAULT_PHOTOS_DIR=/var/pictures
 # Where a folder other than the default is remembered: a drop-in that lets
 # the service write to it, as the unit itself does for the default.
 PHOTOS_DROPIN=/etc/systemd/system/photoframe.service.d/photos-dir.conf
@@ -48,7 +48,7 @@ PHOTOS_DIR=${PHOTOS_DIR:-$DEFAULT_PHOTOS_DIR}
 if [[ ! $PHOTOS_DIR =~ ^(/[A-Za-z0-9._+-]+){2,}$ ]] ||
    [[ $PHOTOS_DIR =~ ^/(bin|boot|dev|etc|lib|proc|run|sbin|sys|usr)/ ]]; then
   echo "Not a usable photos folder: $PHOTOS_DIR" >&2
-  echo "Give a path like /var/photoframe or /srv/photos (letters, digits, . _ + -)." >&2
+  echo "Give a path like /var/pictures or /srv/photos (letters, digits, . _ + -)." >&2
   exit 2
 fi
 if [[ -e $PHOTOS_DIR && ! -d $PHOTOS_DIR ]]; then
@@ -76,6 +76,9 @@ chown -hR photoframe:photoframe "$PHOTOS_DIR"
 # sudo, and replace or remove them later even though each sync makes the
 # photos the service's own. Sub-folders too, as they were just handed over.
 find "$PHOTOS_DIR" -type d -exec chmod 0777 {} +
+# The default was /var/photoframe for a few versions; drop the folder those
+# made if nothing was ever put in it.
+[[ $PHOTOS_DIR == /var/photoframe ]] || rmdir /var/photoframe 2>/dev/null || true
 if [[ $PHOTOS_DIR == "$DEFAULT_PHOTOS_DIR" ]]; then
   rm -f "$PHOTOS_DROPIN"
   rmdir "$(dirname "$PHOTOS_DROPIN")" 2>/dev/null || true
