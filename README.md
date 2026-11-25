@@ -168,7 +168,9 @@ copied in, replaced and removed without `sudo`, for example
 `scp *.jpg pi@photoframe.local:/var/photoframe/`. Every install or upgrade
 gives the folder and everything in it to the `photoframe` user
 (`chown -R photoframe:photoframe`), and the service may write there, so each
-sync also takes over photos copied in since, whoever copied them. To use another folder, name it once; later runs
+sync also takes over photos copied in since, whoever copied them. Running
+the quickstart again does the same by hand, even when there is nothing to
+upgrade, and has the app rescan. To use another folder, name it once; later runs
 keep it:
 
 ```sh
