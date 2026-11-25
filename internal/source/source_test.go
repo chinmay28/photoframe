@@ -385,16 +385,15 @@ func TestDirTakesOwnershipOfPhotos(t *testing.T) {
 		}
 		return uid
 	}
-	for _, p := range []string{photo, filepath.Dir(photo)} {
-		if got := ownedBy(p); got != os.Geteuid() {
-			t.Errorf("%s: owned by %d, want %d", p, got, os.Geteuid())
-		}
+	if got := ownedBy(photo); got != os.Geteuid() {
+		t.Errorf("%s: owned by %d, want %d", photo, got, os.Geteuid())
 	}
 	if got := mode(t, photo); got != PhotoMode {
 		t.Errorf("%s: mode %v, want %v", photo, got, PhotoMode)
 	}
-	// Nothing but listed photos and their sub-folders changes hands.
-	for _, p := range []string{notes, outside, link, root} {
+	// Nothing but listed photos changes hands: whoever made a folder can
+	// keep adding to it.
+	for _, p := range []string{filepath.Dir(photo), notes, outside, link, root} {
 		if got := ownedBy(p); got != other {
 			t.Errorf("%s: owned by %d, want it left with %d", p, got, other)
 		}
