@@ -158,7 +158,8 @@ Photos in upload and folder sources are given mode `644` and, where the
 service is allowed to, handed to the user it runs as (`photoframe`): uploads
 as they are saved, and anything else found in the folder, however it got
 there, at the next sync. Only image files are changed; a photo that can't be
-changed is shown as it is.
+changed is shown as it is. One the service may not even read is left out,
+and the source's line under *Sources* says how many and why.
 
 For photos you copy onto the Pi yourself, the installer makes
 `/var/photoframe`: add it in the app as a folder source. It is open to
