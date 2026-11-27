@@ -4,17 +4,30 @@
 # and photoframe.service:
 #
 #   sudo ./install.sh [--binary ./photoframe-linux-arm64] [--hostname photoframe]
+#                     [--photos-dir /var/pictures]
+#
+# --photos-dir is the folder for photos you copy onto the Pi yourself. It is
+# created if missing, given with everything in it to the photoframe user, and
+# made writable to the service and, with its sub-folders, to every user.
+# Without the option, the folder chosen by an earlier run is kept; the first
+# time, it is /var/pictures.
 #
 # Safe to re-run: it only changes what is missing.
 set -euo pipefail
 
 BIN="./photoframe"
 NEW_HOSTNAME=""
+PHOTOS_DIR=""
+DEFAULT_PHOTOS_DIR=/var/pictures
+# Where a folder other than the default is remembered: a drop-in that lets
+# the service write to it, as the unit itself does for the default.
+PHOTOS_DROPIN=/etc/systemd/system/photoframe.service.d/photos-dir.conf
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --binary) BIN="$2"; shift 2 ;;
     --hostname) NEW_HOSTNAME="$2"; shift 2 ;;
-    -h|--help) sed -n '2,9p' "$0"; exit 0 ;;
+    --photos-dir) PHOTOS_DIR="$2"; shift 2 ;;
+    -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -22,6 +35,26 @@ done
 HERE="$(cd "$(dirname "$0")" && pwd)"
 [[ $(id -u) -eq 0 ]] || { echo "Run as root: sudo $0 $*" >&2; exit 1; }
 [[ -x "$BIN" ]] || { echo "Binary not found or not executable: $BIN" >&2; exit 1; }
+
+# Settle the photos folder before changing anything. It is handed over
+# recursively below, so only take a plain path at least two levels deep
+# (never / or /var), outside the system's own trees.
+if [[ -z $PHOTOS_DIR && -f $PHOTOS_DROPIN ]]; then
+  PHOTOS_DIR=$(sed -n 's/^ReadWritePaths=-\{0,1\}//p' "$PHOTOS_DROPIN" | head -n1)
+fi
+PHOTOS_DIR=${PHOTOS_DIR:-$DEFAULT_PHOTOS_DIR}
+# Resolve .. and symlinks, but only for a path that was absolute to begin with.
+[[ $PHOTOS_DIR != /* ]] || PHOTOS_DIR=$(realpath -m -- "$PHOTOS_DIR")
+if [[ ! $PHOTOS_DIR =~ ^(/[A-Za-z0-9._+-]+){2,}$ ]] ||
+   [[ $PHOTOS_DIR =~ ^/(bin|boot|dev|etc|lib|proc|run|sbin|sys|usr)/ ]]; then
+  echo "Not a usable photos folder: $PHOTOS_DIR" >&2
+  echo "Give a path like /var/pictures or /srv/photos (letters, digits, . _ + -)." >&2
+  exit 2
+fi
+if [[ -e $PHOTOS_DIR && ! -d $PHOTOS_DIR ]]; then
+  echo "Photos folder $PHOTOS_DIR exists and is not a folder" >&2
+  exit 2
+fi
 
 echo "==> Installing binary"
 install -m 0755 "$BIN" /usr/local/bin/photoframe
@@ -34,6 +67,31 @@ fi
 for g in spi gpio; do
   if getent group "$g" >/dev/null; then usermod -aG "$g" photoframe; fi
 done
+
+echo "==> Photos folder $PHOTOS_DIR"
+mkdir -p "$PHOTOS_DIR"
+# -h: a symlink in the folder changes hands itself, not the file it points to.
+chown -hR photoframe:photoframe "$PHOTOS_DIR"
+# Open to everyone, so any user can copy photos in (scp, rsync, cp) without
+# sudo, and replace or remove them later even though each sync makes the
+# photos the service's own. Sub-folders too, as they were just handed over.
+find "$PHOTOS_DIR" -type d -exec chmod 0777 {} +
+# The default was /var/photoframe for a few versions; drop the folder those
+# made if nothing was ever put in it.
+[[ $PHOTOS_DIR == /var/photoframe ]] || rmdir /var/photoframe 2>/dev/null || true
+if [[ $PHOTOS_DIR == "$DEFAULT_PHOTOS_DIR" ]]; then
+  rm -f "$PHOTOS_DROPIN"
+  rmdir "$(dirname "$PHOTOS_DROPIN")" 2>/dev/null || true
+else
+  mkdir -p "$(dirname "$PHOTOS_DROPIN")"
+  cat > "$PHOTOS_DROPIN" <<DROPIN
+# Written by photoframe's install.sh (--photos-dir): the folder for photos
+# copied onto the Pi, writable to the service so it can set their mode and
+# owner. Removed by quickstart.sh --uninstall.
+[Service]
+ReadWritePaths=-$PHOTOS_DIR
+DROPIN
+fi
 
 echo "==> Enabling SPI for the Inky panel"
 CONFIG=/boot/firmware/config.txt

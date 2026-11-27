@@ -83,6 +83,7 @@ Options are environment variables, set after `sudo`:
 | `PHOTOFRAME_REF` | branch, tag or commit to build in source mode (default `main`) |
 | `PHOTOFRAME_BUNDLE` | a release `.tar.gz` already on the Pi, installed without going online |
 | `PHOTOFRAME_HOSTNAME` | set the Pi's hostname, so the app is at `http://<name>.local` |
+| `PHOTOFRAME_PHOTOS_DIR` | folder for photos you copy onto the Pi yourself (default `/var/pictures`, or the one set before); see [Photo sources](#photo-sources) |
 | `PHOTOFRAME_FORCE=1` | reinstall even if that version is already running |
 | `PHOTOFRAME_PURGE=1` | with `--uninstall`, also delete `/var/lib/photoframe` and the service user |
 
@@ -108,6 +109,8 @@ prints is also logged to `/var/log/photoframe-quickstart.log`.
    - adds `dtparam=spi=on` and `dtoverlay=spi0-0cs` to `config.txt` if they
      are missing. The driver drives chip-select itself on GPIO 8, as
      Pimoroni's library does.
+   - creates the photos folder, `/var/pictures` unless `--photos-dir`
+     names another, gives it to that user and opens it to everyone
    - installs and enables `photoframe.service`
    - announces the app over mDNS (`_photoframe._tcp`, an Avahi service file),
      so the Android app can find the frame
@@ -150,6 +153,37 @@ JPEG, which can add seconds per photo on a Pi Zero 2 W before the panel
 starts its refresh. The Android app still converts HEIC to a smaller JPEG
 when you share. A HEIC photo is turned upright by the rotation stored in the
 file, and dated by its EXIF.
+
+Photos in upload and folder sources are given mode `644` and, where the
+service is allowed to, handed to the user it runs as (`photoframe`): uploads
+as they are saved, and anything else found in the folder, however it got
+there, at the next sync. Only image files are changed; a photo that can't be
+changed is shown as it is. One the service may not even read is left out,
+and the source's line under *Sources* says how many and why.
+
+For photos you copy onto the Pi yourself, the installer makes
+`/var/pictures`: add it in the app as a folder source. It is open to
+every user on the Pi (mode `777`, sub-folders included), so photos can be
+copied in, replaced and removed without `sudo`, for example
+`scp *.jpg pi@photoframe.local:/var/pictures/`. Every install or upgrade
+gives the folder and everything in it to the `photoframe` user
+(`chown -R photoframe:photoframe`), and the service may write there, so each
+sync also takes over photos copied in since, whoever copied them. Running
+the quickstart again does the same by hand, even when there is nothing to
+upgrade, and has the app rescan. To use another folder, name it once; later runs
+keep it:
+
+```sh
+curl -fsSL …/quickstart.sh | sudo PHOTOFRAME_PHOTOS_DIR=/srv/photos bash
+```
+
+(`sudo ./install.sh --photos-dir /srv/photos` when installing by hand.) A
+folder source anywhere else is still shown, but is read-only to the service,
+so its photos keep the mode and owner they have.
+
+Taking over other users' files is why the service's unit has `CAP_CHOWN`.
+To keep that from reaching anything else, the unit lets the service open no
+devices except the panel's SPI and GPIO.
 
 Sources sync at startup, every 15 minutes (`-sync-interval`), and on demand
 from the app. If a remote source can't be reached, its cached photos stay in

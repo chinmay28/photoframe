@@ -31,13 +31,16 @@
 #
 # Either way the bundle is installed by deploy/install.sh, the same script
 # `make deploy` uses: binary in /usr/local/bin, a `photoframe` system user,
-# SPI enabled in config.txt, and photoframe.service enabled.
+# SPI enabled in config.txt, photoframe.service enabled, and the photos
+# folder (PHOTOFRAME_PHOTOS_DIR) given to that user.
 #
 # Safe to re-run:
 #
 #   * Photos, caches and settings live in /var/lib/photoframe, which this
 #     script never deletes (except with --uninstall and PHOTOFRAME_PURGE=1).
 #   * Release mode skips the install when that version is already running.
+#   * Every run, skipped install or not, gives the photos folder and what is
+#     in it to the photoframe user, so photos someone copied in can be shown.
 #   * Before an upgrade, the running binary and settings.json are kept. After
 #     the restart it waits for the app to answer with the new version. If it
 #     doesn't, the old binary and settings go back and the old version is
@@ -52,6 +55,11 @@
 #   PHOTOFRAME_GITHUB    owner/name on GitHub         (default: chinmay28/photoframe)
 #   PHOTOFRAME_REF       branch, tag or commit to build in source mode (default: main)
 #   PHOTOFRAME_HOSTNAME  set the Pi's hostname, so the app is at http://<name>.local
+#   PHOTOFRAME_PHOTOS_DIR  folder for photos you copy onto the Pi yourself
+#                        (default: /var/pictures, or the one set before).
+#                        Created if missing; it and everything in it is given
+#                        to the photoframe user, and the service and every
+#                        user may write there
 #   PHOTOFRAME_FORCE     1: reinstall even if this version is already running
 #   PHOTOFRAME_PURGE     1: with --uninstall, also delete /var/lib/photoframe
 #                        (uploaded photos and settings) and the service user
@@ -126,6 +134,10 @@ if [ "$UNINSTALL" = 1 ]; then
   log "Removing photoframe"
   systemctl disable --now photoframe.service 2>/dev/null || :
   rm -f "$UNIT" "$BIN"
+  # install.sh's note of a photos folder other than /var/pictures. The
+  # folder and its photos stay.
+  rm -f "$UNIT.d/photos-dir.conf"
+  rmdir "$UNIT.d" 2>/dev/null || :
   rm -rf "$STATE_DIR" /var/cache/photoframe-build
   systemctl daemon-reload
   # The mDNS announcement install.sh wrote for the Android app.
@@ -203,6 +215,46 @@ answers() {
   return 1
 }
 
+# The folder for photos copied onto the Pi: the one install.sh noted in its
+# drop-in (--photos-dir), else the default.
+photos_dir() {
+  local d=""
+  [ -f "$UNIT.d/photos-dir.conf" ] && d="$(sed -n 's/^ReadWritePaths=-\{0,1\}//p' "$UNIT.d/photos-dir.conf" | head -n1)"
+  echo "${d:-/var/pictures}"
+}
+
+# repair_photos hands the photos folder and everything in it to the service
+# and opens its folders to every user, as install.sh does, so that running
+# quickstart is always enough to make copied-in photos show. If anything
+# had to change hands it asks the app to rescan its sources.
+repair_photos() {
+  local dir stray id
+  dir="$(photos_dir)"
+  [ -d "$dir" ] && id photoframe >/dev/null 2>&1 || return 0
+  stray="$(find "$dir" ! -user photoframe -print -quit 2>/dev/null || :)"
+  chown -hR photoframe:photoframe "$dir"
+  find "$dir" -type d -exec chmod 0777 {} +
+  [ -n "$stray" ] || return 0
+  ok "photos in $dir now belong to the frame"
+  command -v curl >/dev/null 2>&1 || return 0
+  for id in $(curl -fsS --max-time 5 "http://127.0.0.1:$(service_port)/api/sources" 2>/dev/null \
+      | grep -o '"id":"[^"]*"' | cut -d'"' -f4); do
+    curl -fsS --max-time 120 -X POST -o /dev/null \
+      "http://127.0.0.1:$(service_port)/api/sources/$id/sync" 2>/dev/null || :
+  done
+}
+
+# takes_over succeeds when the running service holds CAP_CHOWN (bit 0 of its
+# effective capabilities), which is what lets a sync take over a photo that
+# another user copied in. An older unit doesn't grant it.
+takes_over() {
+  local pid eff
+  pid="$(systemctl show photoframe.service -p MainPID --value 2>/dev/null || :)"
+  [ -n "$pid" ] && [ "$pid" != 0 ] || return 1
+  eff="$(sed -n 's/^CapEff:[[:space:]]*//p' "/proc/$pid/status" 2>/dev/null || :)"
+  [ -n "$eff" ] && [ $(( 0x$eff & 1 )) -eq 1 ]
+}
+
 # up_to_date <version> <what>: exit early when <version> is installed and
 # answering; otherwise say why it will be (re)installed and return.
 up_to_date() {
@@ -211,7 +263,16 @@ up_to_date() {
     log "Reinstalling $1 (PHOTOFRAME_FORCE=1)"
     return 0
   fi
+  if [ -n "${PHOTOFRAME_PHOTOS_DIR:-}" ]; then
+    log "Reinstalling $1 to set the photos folder (PHOTOFRAME_PHOTOS_DIR)"
+    return 0
+  fi
   if answers "$1"; then
+    if ! takes_over; then
+      warn "photoframe $1 is running, but not from this version's service unit: it can't take over photos other users copy in; reinstalling it"
+      return 0
+    fi
+    repair_photos
     ok "photoframe $1 ($2) is already installed and running (PHOTOFRAME_FORCE=1 reinstalls it)"
     print_urls
     exit 0
@@ -506,7 +567,8 @@ else
   log "Installing $NEW_VERSION"
 fi
 
-if ! (cd "$BUNDLE" && ./install.sh --binary ./photoframe ${PHOTOFRAME_HOSTNAME:+--hostname "$PHOTOFRAME_HOSTNAME"}) 2>&1 | tee -a "$LOG"; then
+if ! (cd "$BUNDLE" && ./install.sh --binary ./photoframe ${PHOTOFRAME_HOSTNAME:+--hostname "$PHOTOFRAME_HOSTNAME"} \
+    ${PHOTOFRAME_PHOTOS_DIR:+--photos-dir "$PHOTOFRAME_PHOTOS_DIR"}) 2>&1 | tee -a "$LOG"; then
   die "install.sh failed"
 fi
 
@@ -527,6 +589,13 @@ if healthy "$NEW_VERSION"; then
   rm -f "$STATE_DIR/photoframe.prev"
   echo
   ok "photoframe $NEW_VERSION is running."
+  if ! takes_over; then
+    warn "the service did not get CAP_CHOWN, so it can't take over photos other users copy into $(photos_dir)."
+    warn "Until that is sorted, run quickstart again after copying photos in: it hands them over itself. For a bug report:"
+    { systemctl --version | head -n1
+      systemctl show photoframe.service -p AmbientCapabilities -p CapabilityBoundingSet -p ReadWritePaths
+    } 2>&1 | sed 's/^/    /' | tee -a "$LOG" >&2 || :
+  fi
   print_urls
   echo "    Logs: journalctl -u photoframe -f"
   if [ ! -e /dev/spidev0.0 ]; then
