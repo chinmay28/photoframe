@@ -159,8 +159,10 @@ Some `:core` tests read files outside it on purpose: `deploy/install.sh`
 (the announced service type), `shortcuts.xml` (the shortcut actions),
 `assets/photoframe-bridge.js` (the messages) and the upload fixture.
 
-The release build is signed with the debug key so it sideloads as it
-stands; anybody publishing to a store signs it with their own. There is no
+Releases are signed with one fixed key, read from the `ANDROID_KEYSTORE_BASE64`
+and `ANDROID_KEYSTORE_PASSWORD` repository secrets (a PKCS12 keystore, alias
+`harbor`, shared by every Harbor app), so each release installs over the last.
+A build without them, any local build included, falls back to the debug key. There is no
 emulator in CI, so nothing launches the app there: `.github/workflows/android.yml`
 runs the tests, lint and the build, and checks the APK carries the bridge,
 the shortcuts and no native code.
