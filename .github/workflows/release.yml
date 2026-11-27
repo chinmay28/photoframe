@@ -100,6 +100,22 @@ jobs:
       - name: Build release bundles
         run: scripts/build-release.sh
 
+      # The release key, so every release installs over the last one. Without
+      # the secrets the APK falls back to this runner's debug key, which no
+      # earlier release was signed with, so it warns instead of failing.
+      - name: Release signing key
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ] || [ -z "$KEYSTORE_PASSWORD" ]; then
+            echo "::warning::no ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD secrets: the APK is signed with this runner's debug key and will not install over an earlier release"
+            exit 0
+          fi
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.p12"
+          echo "ANDROID_KEYSTORE=$RUNNER_TEMP/release.p12" >> "$GITHUB_ENV"
+          echo "ANDROID_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+
       # The phone app, stamped with this commit's version: the name the
       # bundles carry, and the commit count as the version code, which only
       # grows. A thin client, so it carries no Go and builds the same for
